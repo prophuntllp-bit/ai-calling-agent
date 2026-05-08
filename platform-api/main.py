@@ -780,6 +780,39 @@ async def create_internal_call_log(payload: InternalCallLogRequest, request: Req
     return call_log.model_dump(mode="json")
 
 
+@app.get("/internal/calls")
+async def list_internal_calls(request: Request, limit: int = 20):
+    """Dashboard endpoint — returns recent calls with recording_url flattened to top level."""
+    expected_token = os.getenv("ORCHESTRATOR_INTERNAL_TOKEN", "local-dev-internal-token")
+    supplied_token = request.headers.get("X-Internal-Token", "") or request.query_params.get("token", "")
+    if supplied_token != expected_token:
+        raise HTTPException(status_code=401, detail="Invalid internal token")
+    with Session(engine) as db:
+        calls = db.exec(
+            select(CallLog).order_by(CallLog.created_at.desc()).limit(limit)
+        ).all()
+    result = []
+    for c in calls:
+        meta = c.call_metadata or {}
+        outcome = meta.get("outcome") or {}
+        recordings = meta.get("recordings") or {}
+        result.append({
+            "call_sid": meta.get("call_sid") or c.id,
+            "phone": c.phone,
+            "lead_name": meta.get("lead_name") or outcome.get("lead_name"),
+            "status": c.status,
+            "outcome": outcome.get("status") or c.status,
+            "duration": outcome.get("call_duration_sec") or meta.get("duration_sec") or 0,
+            "recording_url": meta.get("recording_url") or outcome.get("recording_url") or recordings.get("mixed_url"),
+            "recording_caller_url": recordings.get("caller_url"),
+            "recording_agent_url": recordings.get("agent_url"),
+            "transcript": outcome.get("transcript_summary"),
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "tenant_id": c.tenant_id,
+        })
+    return {"calls": result, "total": len(result)}
+
+
 @app.post("/tenants/{tenant_id}/calls/outbound-test")
 async def outbound_test_call(tenant_id: str, payload: OutboundCallRequest, request: Request):
     if request.state.tenant_id != tenant_id:
