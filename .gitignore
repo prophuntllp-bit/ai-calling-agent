@@ -1,0 +1,39 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Data / recordings
+recordings/
+*.wav
+*.mp3
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Whisper model cache
+.cache/
+models/
+
+# OS
+.DS_Store
+Thumbs.db

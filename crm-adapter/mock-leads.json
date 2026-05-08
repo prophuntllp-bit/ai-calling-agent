@@ -1,0 +1,32 @@
+[
+  {
+    "id": "lead-demo-001",
+    "name": "Rahul Patil",
+    "phone": "+919876543210",
+    "project": "Prophunt Heights",
+    "budget": "70L-90L",
+    "location": "Hinjewadi",
+    "language_preference": "hi",
+    "source": "website",
+    "status": "new",
+    "call_attempts": 0,
+    "custom_fields": {},
+    "developer": "Prophunt Realty",
+    "voice_gender": "female"
+  },
+  {
+    "id": "lead-demo-002",
+    "name": "Sneha Kulkarni",
+    "phone": "+919812345678",
+    "project": "Prophunt Heights",
+    "budget": "90L-1.1Cr",
+    "location": "Wakad",
+    "language_preference": "mr",
+    "source": "facebook_ads",
+    "status": "interested",
+    "call_attempts": 1,
+    "custom_fields": {},
+    "developer": "Prophunt Realty",
+    "voice_gender": "female"
+  }
+]

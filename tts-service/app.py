@@ -1,0 +1,243 @@
+from __future__ import annotations
+
+import base64
+import io
+import os
+
+import httpx
+import numpy as np
+import soundfile as sf
+import torch
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from shared.logging import configure_logging
+from shared.tracing import RequestTracingMiddleware
+
+from emotion_mapper import map_emotion
+from indic_tts import IndicTTSFallback
+from voice_library import VoiceLibrary
+
+
+logger = configure_logging("tts-service")
+app = FastAPI(title="TTS Service", version="2.0.0")
+app.add_middleware(RequestTracingMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+voice_library = VoiceLibrary(os.getenv("VOICE_DIR", "/data/voices"))
+indic_fallback = IndicTTSFallback()
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "local")
+TTS_API_URL = os.getenv("TTS_API_URL", "").rstrip("/")
+TTS_API_TOKEN = os.getenv("TTS_API_TOKEN", "")
+TTS_API_TIMEOUT_SEC = float(os.getenv("TTS_API_TIMEOUT_SEC", "180"))
+SARVAM_API_URL = os.getenv("SARVAM_API_URL", "https://api.sarvam.ai").rstrip("/")
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
+SARVAM_TTS_MODEL = os.getenv("SARVAM_TTS_MODEL", "bulbul:v3")
+SARVAM_TTS_SPEAKER = os.getenv("SARVAM_TTS_SPEAKER", "Priya")
+SARVAM_TTS_LANGUAGE = os.getenv("SARVAM_TTS_LANGUAGE", "en-IN")
+SARVAM_TTS_PACE = float(os.getenv("SARVAM_TTS_PACE", "1.0"))
+SARVAM_TTS_SAMPLE_RATE = int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "24000"))
+
+SARVAM_VOICES = [
+    {"voice_id": "priya", "language": "en-IN", "gender": "female", "variant": 1, "path": "sarvam://priya"},
+    {"voice_id": "ritu", "language": "hi-IN", "gender": "female", "variant": 1, "path": "sarvam://ritu"},
+    {"voice_id": "simran", "language": "pa-IN", "gender": "female", "variant": 1, "path": "sarvam://simran"},
+    {"voice_id": "roopa", "language": "mr-IN", "gender": "female", "variant": 1, "path": "sarvam://roopa"},
+    {"voice_id": "kavya", "language": "ta-IN", "gender": "female", "variant": 1, "path": "sarvam://kavya"},
+    {"voice_id": "shreya", "language": "bn-IN", "gender": "female", "variant": 1, "path": "sarvam://shreya"},
+    {"voice_id": "shubh", "language": "en-IN", "gender": "male", "variant": 1, "path": "sarvam://shubh"},
+    {"voice_id": "rahul", "language": "hi-IN", "gender": "male", "variant": 1, "path": "sarvam://rahul"},
+    {"voice_id": "anand", "language": "mr-IN", "gender": "male", "variant": 1, "path": "sarvam://anand"},
+    {"voice_id": "vijay", "language": "te-IN", "gender": "male", "variant": 1, "path": "sarvam://vijay"},
+]
+
+
+class SynthRequest(BaseModel):
+    text: str
+    voice_id: str | None = None
+    language: str = "hi"
+    gender: str = "female"
+    emotion: str | None = None
+    context: dict | None = None
+
+
+def generate_wave(text: str, language: str, gender: str, emotion: str) -> tuple[np.ndarray, int]:
+    return indic_fallback.synthesize(text, language, gender, emotion)
+
+
+def _normalize_language(language: str | None) -> str:
+    value = (language or "").strip()
+    if not value:
+        return SARVAM_TTS_LANGUAGE
+    if "-" in value:
+        return value
+    mapping = {
+        "en": "en-IN",
+        "hi": "hi-IN",
+        "mr": "mr-IN",
+        "bn": "bn-IN",
+        "ta": "ta-IN",
+        "te": "te-IN",
+        "kn": "kn-IN",
+        "ml": "ml-IN",
+        "gu": "gu-IN",
+        "pa": "pa-IN",
+        "od": "od-IN",
+    }
+    return mapping.get(value.lower(), SARVAM_TTS_LANGUAGE)
+
+
+def _select_sarvam_speaker(request: SynthRequest) -> str:
+    voice_id = (request.voice_id or "").strip()
+    if voice_id:
+        return voice_id.split("://")[-1].split("/")[-1].lower()
+    default = SARVAM_TTS_SPEAKER.strip() or "priya"
+    return default.lower()
+
+
+def _filter_sarvam_voices(language: str | None = None) -> list[dict]:
+    normalized = _normalize_language(language)
+    if not language:
+        return list(SARVAM_VOICES)
+    same_language = [voice for voice in SARVAM_VOICES if voice["language"] == normalized]
+    return same_language or list(SARVAM_VOICES)
+
+
+async def _remote_synthesize(request: SynthRequest, emotion: str):
+    if not TTS_API_URL:
+        raise HTTPException(status_code=500, detail="TTS_API_URL is not configured")
+    headers = {"Authorization": f"Bearer {TTS_API_TOKEN}"} if TTS_API_TOKEN else {}
+    payload = {
+        "text": request.text[:500],
+        "language": request.language,
+        "gender": request.gender,
+        "emotion": emotion,
+        "voice_id": request.voice_id,
+        "context": request.context or {},
+    }
+    async with httpx.AsyncClient(timeout=TTS_API_TIMEOUT_SEC) as client:
+        response = await client.post(f"{TTS_API_URL}/synthesize", json=payload, headers=headers)
+        response.raise_for_status()
+    return response.content, response.headers.get("content-type", "audio/wav")
+
+
+async def _sarvam_synthesize(request: SynthRequest):
+    if not SARVAM_API_KEY:
+        raise HTTPException(status_code=500, detail="SARVAM_API_KEY is not configured")
+    payload = {
+        "inputs": [request.text[:2500]],
+        "target_language_code": _normalize_language(request.language),
+        "speaker": _select_sarvam_speaker(request),
+        "model": SARVAM_TTS_MODEL,
+        "pace": SARVAM_TTS_PACE,
+        "sample_rate": SARVAM_TTS_SAMPLE_RATE,
+    }
+    headers = {
+        "api-subscription-key": SARVAM_API_KEY,
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=TTS_API_TIMEOUT_SEC) as client:
+        response = await client.post(f"{SARVAM_API_URL}/text-to-speech", json=payload, headers=headers)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = response.text
+            raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
+    data = response.json()
+    audios = data.get("audios") or []
+    if not audios:
+        raise HTTPException(status_code=502, detail="Sarvam returned no audio data")
+    return base64.b64decode("".join(audios)), "audio/wav"
+
+
+@app.post("/synthesize")
+async def synthesize(request: SynthRequest):
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text is required")
+    emotion = request.emotion or map_emotion(request.text, request.context)
+    if TTS_PROVIDER == "sarvam":
+        audio_bytes, content_type = await _sarvam_synthesize(request)
+        return StreamingResponse(
+            io.BytesIO(audio_bytes),
+            media_type=content_type,
+            headers={
+                "X-Emotion": emotion,
+                "X-Language": _normalize_language(request.language),
+                "X-TTS-Provider": "sarvam",
+                "X-TTS-Voice": _select_sarvam_speaker(request),
+            },
+        )
+    if TTS_PROVIDER == "http":
+        audio_bytes, content_type = await _remote_synthesize(request, emotion)
+        return StreamingResponse(
+            io.BytesIO(audio_bytes),
+            media_type=content_type,
+            headers={"X-Emotion": emotion, "X-Language": request.language, "X-TTS-Provider": "http"},
+        )
+    audio, sample_rate = generate_wave(request.text[:500], request.language, request.gender, emotion)
+    buffer = io.BytesIO()
+    sf.write(buffer, audio, sample_rate, format="WAV", subtype="PCM_16")
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="audio/wav",
+        headers={"X-Emotion": emotion, "X-Language": request.language},
+    )
+
+
+@app.post("/register-voice")
+async def register_voice(client_id: str = Form(...), voice_name: str = Form("default"), gender: str = Form("female"), audio: UploadFile = File(...)):
+    payload = await audio.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="Audio is required")
+    profile = voice_library.register_voice(f"{client_id}_{voice_name}", gender, payload)
+    return profile.model_dump()
+
+
+@app.get("/voices")
+async def list_voices(language: str | None = None):
+    local_voices = [voice.model_dump() for voice in voice_library.list_available_voices(language)]
+    if TTS_PROVIDER == "sarvam":
+        return {"voices": [*local_voices, *_filter_sarvam_voices(language)]}
+    return {"voices": local_voices}
+
+
+@app.get("/health")
+async def health():
+    if TTS_PROVIDER == "sarvam":
+        return {
+            "status": "ok",
+            "provider": "sarvam",
+            "engine": SARVAM_TTS_MODEL,
+            "upstream": SARVAM_API_URL,
+            "voices_registered": len(_filter_sarvam_voices()),
+            "sample_ready": bool(SARVAM_API_KEY),
+        }
+    if TTS_PROVIDER == "http":
+        async with httpx.AsyncClient(timeout=min(TTS_API_TIMEOUT_SEC, 60)) as client:
+            response = await client.get(f"{TTS_API_URL}/health")
+            response.raise_for_status()
+        payload = response.json()
+        return {
+            "status": "ok",
+            "provider": "http",
+            "engine": payload.get("engine", "modal"),
+            "upstream": TTS_API_URL,
+            "voices_registered": len(voice_library.list_available_voices()),
+            "sample_ready": True,
+        }
+    sample, _ = generate_wave("health check", "en", "female", "neutral")
+    return {
+        "status": "ok",
+        "provider": "local",
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "voices_registered": len(voice_library.list_available_voices()),
+        "sample_ready": bool(sample.size),
+    }

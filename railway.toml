@@ -1,0 +1,13 @@
+# Prophunt AI Backend — Railway Monorepo Config
+# Each service is deployed separately from this repo using its subdirectory.
+# Set "Root Directory" per service in Railway dashboard as shown below.
+#
+# Service map:
+#   orchestrator   → rootDirectory: orchestrator/
+#   platform-api   → rootDirectory: platform-api/
+#   campaign-svc   → rootDirectory: campaign-service/
+#   crm-adapter    → rootDirectory: crm-adapter/
+#   knowledge-svc  → rootDirectory: knowledge-service/
+#   stt            → rootDirectory: stt-service/   (build context = repo root for shared/)
+#   tts            → rootDirectory: tts-service/
+#   vad            → rootDirectory: vad-service/
