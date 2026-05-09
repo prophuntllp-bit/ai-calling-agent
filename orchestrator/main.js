@@ -671,9 +671,13 @@ function isTerminalGuidedState(session) {
   return ["callback_confirmed", "callback_declined", "closed"].includes(session?.guidedState || "");
 }
 
-function shouldUseGuidedReply(userText = "") {
+function shouldUseGuidedReply(session, userText = "") {
   const text = String(userText || "").toLowerCase();
-  return /price|cost|rate|budget|how much|pricing|(?:\b|[^a-z0-9])(?:1|one|2|two|3|three|4|four)\s*(?:b|v|d)?\s*h\s*k\b|bhk|vhk|dhk|dbhk|vbhk|configuration|config|flat size|carpet|sq ?ft|yes|proceed|tell me|go ahead|interested|ok|okay|location|where|near|connectivity|area|visit|site|schedule|appointment|callback|bye|not interested|stop|later/.test(text);
+  const guidedState = session?.guidedState || null;
+  if (guidedState) {
+    return true;
+  }
+  return /price|cost|rate|budget|how much|pricing|(?:\b|[^a-z0-9])(?:1|one|2|two|3|three|4|four)\s*(?:b|v|d)?\s*h\s*k\b|bhk|vhk|dhk|dbhk|vbhk|configuration|config|flat size|carpet|sq ?ft|location|where|near|connectivity|area|visit|site|schedule|appointment|callback|bye|goodbye|not interested|stop|later/.test(text);
 }
 
 async function getLLMResponse(session, userText) {
@@ -681,7 +685,7 @@ async function getLLMResponse(session, userText) {
   const knowledgeContext = await getKnowledgeContext(session.campaign?.project_id || session.lead.project_id, userText);
   session.history.push({ role: "user", content: userText });
   session.history = session.history.slice(-12);
-  if (shouldUseGuidedReply(userText) || !knowledgeContext) {
+  if (shouldUseGuidedReply(session, userText)) {
     const reply = buildRuleBasedReply(session, userText);
     session.history.push({ role: "assistant", content: reply });
     return reply;
@@ -693,8 +697,8 @@ async function getLLMResponse(session, userText) {
         {
           model: process.env.LLM_MODEL || "llama3:latest",
           messages: [{ role: "system", content: buildSystemPrompt(session.lead, knowledgeContext, language) }, ...session.history],
-          temperature: 0.5,
-          max_tokens: 180,
+          temperature: 0.35,
+          max_tokens: 110,
           stream: false,
         },
         { timeout: parseInt(process.env.LLM_REQUEST_TIMEOUT_MS || "45000", 10) }
@@ -889,7 +893,7 @@ async function uploadRecordingToCloudinary(filePath, callSid) {
   if (!process.env.CLOUDINARY_CLOUD_NAME || !fs.existsSync(filePath)) return null;
   try {
     const result = await cloudinary.uploader.upload(filePath, {
-      resource_type: "video", // Cloudinary uses "video" for audio files
+      resource_type: "video",
       folder: "call-recordings",
       public_id: `${callSid}/mixed`,
       overwrite: true,
@@ -1249,12 +1253,6 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
 
   try {
     console.log(`[enablex-media] processing caller utterance callSid=${callSid} reason=${reason} bytes=${utteranceAudio.length}`);
-    if (!languageManager.isLocked(callSid)) {
-      const detected = await detectLanguage(utteranceAudio);
-      if (detected.language) languageManager.recordUtterance(callSid, detected.language, "");
-    }
-    // Always use "auto" so Whisper detects the utterance language naturally
-    // (session language drives TTS output; STT should never be forced to a specific language)
     const transcription = await transcribeAudio(utteranceAudio, "auto");
     console.log(`[stt] caller utterance callSid=${callSid} text="${transcription.text || ""}" language=${transcription.language || ""}`);
     if (!transcription.text) return;
@@ -1346,9 +1344,9 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
   if (!isCollecting) return;
   inbound.silenceFrames += 1;
   const bufferedMs = inbound.chunks.length * 20;
-  const enoughSpeech = inbound.speechFrames >= 5 || bufferedMs >= 1200;
-  const endedBySilence = inbound.silenceFrames >= 10;
-  const tooLong = bufferedMs >= 3500;
+  const enoughSpeech = inbound.speechFrames >= 3 || bufferedMs >= 700;
+  const endedBySilence = inbound.silenceFrames >= 6;
+  const tooLong = bufferedMs >= 2200;
 
   if ((enoughSpeech && endedBySilence) || tooLong) {
     await processCallerUtterance(ws, session, callSid, endedBySilence ? "silence" : "max-buffer");

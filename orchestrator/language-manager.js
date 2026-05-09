@@ -28,15 +28,21 @@ function baseLanguage(language = "hi") {
   return String(language || "hi").toLowerCase().split("-")[0] || "hi";
 }
 
+function hasMeaningfulText(text = "") {
+  return String(text || "").trim().length >= 2;
+}
+
 class LanguageManager {
   constructor() {
     this.sessions = new Map();
   }
 
   initialize(callSid, preferredLanguage = "auto") {
+    const normalizedPreferred = preferredLanguage === "auto" ? "auto" : baseLanguage(preferredLanguage);
     this.sessions.set(callSid, {
-      detectedLanguage: preferredLanguage === "auto" ? null : preferredLanguage,
-      preferredLanguage,
+      detectedLanguage: normalizedPreferred === "auto" ? null : normalizedPreferred,
+      preferredLanguage: normalizedPreferred,
+      languageVotes: {},
       utterances: [],
     });
   }
@@ -44,9 +50,35 @@ class LanguageManager {
   recordUtterance(callSid, language, text) {
     const session = this.sessions.get(callSid);
     if (!session) return;
-    session.utterances.push({ language, text });
-    if (!session.detectedLanguage && language && language !== "auto") {
-      session.detectedLanguage = language;
+    const normalizedLanguage = language && language !== "auto" ? baseLanguage(language) : null;
+    session.utterances.push({ language: normalizedLanguage || language, text });
+    if (!normalizedLanguage) {
+      return;
+    }
+    session.languageVotes[normalizedLanguage] = (session.languageVotes[normalizedLanguage] || 0) + 1;
+
+    if (!session.detectedLanguage) {
+      session.detectedLanguage = normalizedLanguage;
+      return;
+    }
+
+    const currentLanguage = baseLanguage(session.detectedLanguage);
+    if (normalizedLanguage === currentLanguage) {
+      return;
+    }
+
+    const currentVotes = session.languageVotes[currentLanguage] || 0;
+    const nextVotes = session.languageVotes[normalizedLanguage] || 0;
+    const shouldSwitch =
+      hasMeaningfulText(text) &&
+      (
+        currentLanguage === baseLanguage(session.preferredLanguage || "auto") ||
+        nextVotes >= currentVotes ||
+        nextVotes >= 2
+      );
+
+    if (shouldSwitch) {
+      session.detectedLanguage = normalizedLanguage;
     }
   }
 
