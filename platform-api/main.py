@@ -10,7 +10,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from shared.logging import configure_logging
 from shared.tracing import RequestTracingMiddleware
@@ -937,3 +937,161 @@ async def health():
     with Session(engine) as session:
         session.exec(select(Tenant).limit(1)).all()
     return {"status": "ok", "database": "reachable"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KNOWLEDGE BASE  —  /internal/knowledge-bases/*
+# Uses simple PostgreSQL storage. Content is injected into agent calls via
+# prompt_dynamic_variables so the AI answers project-specific questions.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import datetime
+from typing import Optional
+
+class KnowledgeBase(SQLModel, table=True):
+    __tablename__ = "knowledge_bases"
+    __table_args__ = {"extend_existing": True}
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str
+    description: Optional[str] = None
+    tenant_id: str = Field(default="default")
+    created_at: Optional[str] = Field(default_factory=lambda: datetime.datetime.utcnow().isoformat())
+
+
+class KnowledgeSource(SQLModel, table=True):
+    __tablename__ = "knowledge_sources"
+    __table_args__ = {"extend_existing": True}
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    kb_id: str = Field(foreign_key="knowledge_bases.id")
+    name: str
+    type: str = Field(default="text")   # "text" | "qa"
+    content: str
+    char_count: int = Field(default=0)
+    created_at: Optional[str] = Field(default_factory=lambda: datetime.datetime.utcnow().isoformat())
+
+
+# Create tables on startup (idempotent)
+try:
+    SQLModel.metadata.create_all(engine)
+except Exception:
+    pass
+
+
+def _verify_internal(request: Request):
+    expected = os.getenv("ORCHESTRATOR_INTERNAL_TOKEN", "local-dev-internal-token")
+    token = request.headers.get("X-Internal-Token", "") or request.query_params.get("token", "")
+    if token != expected:
+        raise HTTPException(status_code=401, detail="Invalid internal token")
+
+
+class KBCreateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class SourceCreateRequest(BaseModel):
+    name: str
+    content: str
+    type: str = "text"
+
+
+@app.get("/internal/knowledge-bases")
+async def list_knowledge_bases(request: Request):
+    _verify_internal(request)
+    with Session(engine) as db:
+        bases = db.exec(select(KnowledgeBase).order_by(KnowledgeBase.created_at.desc())).all()
+        result = []
+        for kb in bases:
+            count = len(db.exec(select(KnowledgeSource).where(KnowledgeSource.kb_id == kb.id)).all())
+            result.append({
+                "id": kb.id,
+                "name": kb.name,
+                "description": kb.description,
+                "source_count": count,
+                "created_at": kb.created_at,
+            })
+    return {"knowledge_bases": result}
+
+
+@app.post("/internal/knowledge-bases")
+async def create_knowledge_base(request: Request, payload: KBCreateRequest):
+    _verify_internal(request)
+    kb = KnowledgeBase(name=payload.name.strip(), description=(payload.description or "").strip())
+    with Session(engine) as db:
+        db.add(kb)
+        db.commit()
+        db.refresh(kb)
+    return {"id": kb.id, "name": kb.name, "description": kb.description, "source_count": 0, "created_at": kb.created_at}
+
+
+@app.delete("/internal/knowledge-bases/{kb_id}")
+async def delete_knowledge_base(kb_id: str, request: Request):
+    _verify_internal(request)
+    with Session(engine) as db:
+        kb = db.get(KnowledgeBase, kb_id)
+        if not kb:
+            raise HTTPException(status_code=404, detail="Not found")
+        # delete sources first
+        sources = db.exec(select(KnowledgeSource).where(KnowledgeSource.kb_id == kb_id)).all()
+        for s in sources:
+            db.delete(s)
+        db.delete(kb)
+        db.commit()
+    return {"deleted": kb_id}
+
+
+@app.get("/internal/knowledge-bases/{kb_id}/sources")
+async def list_kb_sources(kb_id: str, request: Request):
+    _verify_internal(request)
+    with Session(engine) as db:
+        if not db.get(KnowledgeBase, kb_id):
+            raise HTTPException(status_code=404, detail="KB not found")
+        sources = db.exec(select(KnowledgeSource).where(KnowledgeSource.kb_id == kb_id).order_by(KnowledgeSource.created_at.desc())).all()
+    return {"sources": [{"id": s.id, "name": s.name, "type": s.type, "content": s.content, "char_count": s.char_count, "created_at": s.created_at} for s in sources]}
+
+
+@app.post("/internal/knowledge-bases/{kb_id}/sources")
+async def add_kb_source(kb_id: str, request: Request, payload: SourceCreateRequest):
+    _verify_internal(request)
+    with Session(engine) as db:
+        if not db.get(KnowledgeBase, kb_id):
+            raise HTTPException(status_code=404, detail="KB not found")
+        content = payload.content.strip()
+        source = KnowledgeSource(
+            kb_id=kb_id,
+            name=payload.name.strip(),
+            type=payload.type,
+            content=content,
+            char_count=len(content),
+        )
+        db.add(source)
+        db.commit()
+        db.refresh(source)
+    return {"id": source.id, "name": source.name, "type": source.type, "char_count": source.char_count, "created_at": source.created_at}
+
+
+@app.delete("/internal/knowledge-bases/{kb_id}/sources/{source_id}")
+async def delete_kb_source(kb_id: str, source_id: str, request: Request):
+    _verify_internal(request)
+    with Session(engine) as db:
+        source = db.get(KnowledgeSource, source_id)
+        if not source or source.kb_id != kb_id:
+            raise HTTPException(status_code=404, detail="Source not found")
+        db.delete(source)
+        db.commit()
+    return {"deleted": source_id}
+
+
+@app.get("/internal/knowledge-bases/{kb_id}/export")
+async def export_kb_for_agent(kb_id: str, request: Request):
+    """Returns all sources as a single text block — used by orchestrator to inject into agent prompt."""
+    _verify_internal(request)
+    with Session(engine) as db:
+        kb = db.get(KnowledgeBase, kb_id)
+        if not kb:
+            raise HTTPException(status_code=404, detail="Not found")
+        sources = db.exec(select(KnowledgeSource).where(KnowledgeSource.kb_id == kb_id)).all()
+    text = f"=== {kb.name} ===\n\n"
+    for s in sources:
+        text += f"--- {s.name} ---\n{s.content}\n\n"
+    return {"kb_id": kb_id, "name": kb.name, "text": text.strip(), "char_count": len(text)}
