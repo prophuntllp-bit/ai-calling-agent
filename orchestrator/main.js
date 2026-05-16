@@ -11,6 +11,7 @@ const Redis = require("ioredis");
 const { Counter, Histogram, Registry, collectDefaultMetrics } = require("prom-client");
 const { LanguageManager } = require("./language-manager");
 const { v2: cloudinary } = require("cloudinary");
+const { AgniBridge, createAgniSession } = require("./agni-bridge");
 
 if (process.env.CLOUDINARY_CLOUD_NAME) {
   cloudinary.config({
@@ -44,6 +45,12 @@ const config = {
     baseUrl: (process.env.ENABLEX_VOICE_BASE_URL || "https://api.enablex.io/voice/v1").replace(/\/$/, ""),
   },
   telephonyProvider: (process.env.TELEPHONY_PROVIDER || "enablex").toLowerCase(),
+  // Ravan.ai Agni — set both vars to enable; leave blank to use local STT/LLM/TTS
+  agni: {
+    apiKey: process.env.AGNI_API_KEY || "",
+    agentId: process.env.AGNI_AGENT_ID || "",
+    get enabled() { return !!(this.apiKey && this.agentId); },
+  },
 };
 
 const app = express();
@@ -952,6 +959,13 @@ async function endCall(session, finalStatus = "completed") {
   session.closed = true;
   session.status = finalStatus;
   session.endedAt = nowIso();
+
+  // Disconnect Agni LiveKit bridge if active
+  if (session.agniBridge) {
+    session.agniBridge.disconnect().catch(() => {});
+    session.agniBridge = null;
+  }
+
   await finalizeRecording(session);
   if (session.recordings?.mixed_path) {
     const cloudUrl = await uploadRecordingToCloudinary(session.recordings.mixed_path, session.callSid);
@@ -1343,6 +1357,12 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
   }
   await recordCallerAudio(session, audioBuffer, "caller-media");
 
+  // ── Agni mode: stream audio directly to LiveKit, skip local VAD/STT/LLM/TTS ──
+  if (session.agniBridge?.connected) {
+    session.agniBridge.pushCallerAudio(audioBuffer);
+    return;
+  }
+
   const inbound = session.inboundAudio;
   const hasSpeech = await detectSpeech(audioBuffer);
 
@@ -1602,22 +1622,88 @@ wss.on("connection", (ws, req) => {
           };
           session.status = "stream_started";
           console.log(`[enablex-media] stream started for ${voiceId}`);
-          if (!session.pendingGreetingAudio) {
-            const greeting = await getOpeningMessage(session);
-            session.pendingGreetingAudio = await synthesizeSpeech(session, greeting);
-          }
-          if (session.pendingGreetingAudio) {
-            const pending = session.pendingGreetingAudio;
-            setTimeout(() => {
-              if (sendEnablexMedia(ws, session, pending, "opening-greeting")) {
-                recordAgentAudio(session, pending, "opening-greeting").catch((error) =>
-                  console.warn("[recording] opening capture failed", error.message)
-                );
-                session.pendingGreetingAudio = null;
-                session.openingPlayedAt = nowIso();
+
+          // ── Agni mode: create LiveKit session, skip local greeting synthesis ──
+          if (config.agni.enabled) {
+            try {
+              const agniSession = await createAgniSession({
+                apiKey: config.agni.apiKey,
+                agentId: config.agni.agentId,
+                callSid: voiceId,
+                dynamicVariables: {
+                  lead_name: session.lead?.name || "there",
+                  phone: session.lead?.phone || "",
+                  project: session.campaign?.name || session.lead?.project || "",
+                  language: session.lead?.language || "english",
+                },
+              });
+              console.log(`[agni-bridge] session created callSid=${voiceId} agni_session=${agniSession.session_id}`);
+              session.agniSessionId = agniSession.session_id;
+
+              const bridge = new AgniBridge({
+                callSid: voiceId,
+                livekitUrl: agniSession.url,
+                token: agniSession.access_token,
+                onAgentAudio: (pcm16Buffer) => {
+                  // Agni speaks → encode μ-law → send to EnableX
+                  if (ws.readyState === WebSocket.OPEN) {
+                    sendEnablexMedia(ws, session, pcm16Buffer, "agni-reply");
+                  }
+                },
+                onDisconnect: (reason) => {
+                  console.log(`[agni-bridge] session ended callSid=${voiceId} reason=${reason}`);
+                  // Agni hung up → clean up our side too
+                  if (!session.closed) {
+                    scheduleAgentSideHangup(ws, session, "agni_completed", 800);
+                  }
+                },
+              });
+
+              session.agniBridge = bridge;
+              await bridge.connect();
+
+              // Agni sends its own opening line — skip local TTS greeting
+              session.pendingGreetingAudio = null;
+              session.openingPlayedAt = nowIso();
+            } catch (err) {
+              console.error(`[agni-bridge] failed to start callSid=${voiceId}`, err.message);
+              // Fall back to local STT/LLM/TTS pipeline
+              session.agniBridge = null;
+              if (!session.pendingGreetingAudio) {
+                const greeting = await getOpeningMessage(session);
+                session.pendingGreetingAudio = await synthesizeSpeech(session, greeting);
               }
-            }, 700);
+              if (session.pendingGreetingAudio) {
+                const pending = session.pendingGreetingAudio;
+                setTimeout(() => {
+                  if (sendEnablexMedia(ws, session, pending, "opening-greeting")) {
+                    recordAgentAudio(session, pending, "opening-greeting").catch(() => {});
+                    session.pendingGreetingAudio = null;
+                    session.openingPlayedAt = nowIso();
+                  }
+                }, 700);
+              }
+            }
+          } else {
+            // ── Local pipeline mode (no Agni) ──────────────────────────────────
+            if (!session.pendingGreetingAudio) {
+              const greeting = await getOpeningMessage(session);
+              session.pendingGreetingAudio = await synthesizeSpeech(session, greeting);
+            }
+            if (session.pendingGreetingAudio) {
+              const pending = session.pendingGreetingAudio;
+              setTimeout(() => {
+                if (sendEnablexMedia(ws, session, pending, "opening-greeting")) {
+                  recordAgentAudio(session, pending, "opening-greeting").catch((error) =>
+                    console.warn("[recording] opening capture failed", error.message)
+                  );
+                  session.pendingGreetingAudio = null;
+                  session.openingPlayedAt = nowIso();
+                }
+              }, 700);
+            }
           }
+
           await persistSession(session);
           return;
         }

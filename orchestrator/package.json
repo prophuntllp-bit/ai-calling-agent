@@ -9,6 +9,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "@livekit/rtc-node": "^0.13.0",
     "axios": "^1.6.0",
     "cloudinary": "^2.0.0",
     "express": "^4.18.0",
