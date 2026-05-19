@@ -43,7 +43,7 @@ SARVAM_TTS_MODEL = os.getenv("SARVAM_TTS_MODEL", "bulbul:v3")
 SARVAM_TTS_SPEAKER = os.getenv("SARVAM_TTS_SPEAKER", "Priya")
 SARVAM_TTS_LANGUAGE = os.getenv("SARVAM_TTS_LANGUAGE", "en-IN")
 SARVAM_TTS_PACE = float(os.getenv("SARVAM_TTS_PACE", "1.0"))
-SARVAM_TTS_SAMPLE_RATE = int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "24000"))
+SARVAM_TTS_SAMPLE_RATE = int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "8000"))
 
 SARVAM_VOICES = [
     {"voice_id": "priya", "language": "en-IN", "gender": "female", "variant": 1, "path": "sarvam://priya"},
@@ -128,16 +128,51 @@ async def _remote_synthesize(request: SynthRequest, emotion: str):
     return response.content, response.headers.get("content-type", "audio/wav")
 
 
+def _preprocess_tts_text(text: str, language: str) -> str:
+    """
+    Preprocess text before sending to Sarvam TTS.
+    Replaces English brand names / mixed-script words with phonetic equivalents
+    so the Hindi TTS voice doesn't mangle them.
+    Only applied for Indic languages (not en-IN).
+    """
+    if language and language.startswith("en"):
+        return text
+
+    import re
+
+    # Company / brand name fixes — phonetic Devanagari spellings
+    brand_map = {
+        r"\bProphunt\b": "प्रॉफ़हंट",
+        r"\bprophunt\b": "प्रॉफ़हंट",
+        r"\bPROPHUNT\b": "प्रॉफ़हंट",
+        # Mahindra Citadel is usually fine but Citadel gets mangled
+        r"\bCitadel\b": "सिटाडेल",
+        r"\bcitadel\b": "सिटाडेल",
+        # Common real-estate English terms in Hindi context
+        r"\bsite visit\b": "साइट विज़िट",
+        r"\bSite Visit\b": "साइट विज़िट",
+        r"\bBHK\b": "बी एच के",
+        r"\bCallback\b": "कॉलबैक",
+        r"\bcallback\b": "कॉलबैक",
+    }
+    for pattern, replacement in brand_map.items():
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
 async def _sarvam_synthesize(request: SynthRequest):
     if not SARVAM_API_KEY:
         raise HTTPException(status_code=500, detail="SARVAM_API_KEY is not configured")
+    lang = _normalize_language(request.language)
+    processed_text = _preprocess_tts_text(request.text[:2500], lang)
     payload = {
-        "inputs": [request.text[:2500]],
-        "target_language_code": _normalize_language(request.language),
+        "inputs": [processed_text],
+        "target_language_code": lang,
         "speaker": _select_sarvam_speaker(request),
         "model": SARVAM_TTS_MODEL,
         "pace": SARVAM_TTS_PACE,
         "sample_rate": SARVAM_TTS_SAMPLE_RATE,
+        "enable_preprocessing": True,
     }
     headers = {
         "api-subscription-key": SARVAM_API_KEY,

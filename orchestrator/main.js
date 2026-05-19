@@ -1374,6 +1374,31 @@ function resamplePcm16(pcmBuffer, fromRate, toRate) {
   const inputSamples = Math.floor(pcmBuffer.length / 2);
   const outputSamples = Math.max(1, Math.floor((inputSamples * toRate) / fromRate));
   const out = Buffer.alloc(outputSamples * 2);
+
+  // When downsampling, apply a simple FIR low-pass anti-aliasing filter before
+  // decimation. Without this, frequencies above toRate/2 alias back into the
+  // audio band and produce crackling (e.g. 24kHz → 8kHz without filtering).
+  if (fromRate > toRate) {
+    const ratio = fromRate / toRate;
+    // FIR window size: covers ~ratio samples either side for smooth rolloff
+    const halfWin = Math.ceil(ratio);
+    for (let i = 0; i < outputSamples; i++) {
+      const center = (i * fromRate) / toRate;
+      let sum = 0, weight = 0;
+      for (let j = -halfWin; j <= halfWin; j++) {
+        const idx = Math.round(center) + j;
+        if (idx < 0 || idx >= inputSamples) continue;
+        // Triangular window weight — simple, zero-artifact rolloff
+        const w = 1 - Math.abs(j) / (halfWin + 1);
+        sum += pcmBuffer.readInt16LE(idx * 2) * w;
+        weight += w;
+      }
+      out.writeInt16LE(Math.round(sum / weight), i * 2);
+    }
+    return out;
+  }
+
+  // Upsampling: linear interpolation is fine (no aliasing risk)
   for (let i = 0; i < outputSamples; i += 1) {
     const sourceIndex = (i * fromRate) / toRate;
     const low = Math.floor(sourceIndex);
