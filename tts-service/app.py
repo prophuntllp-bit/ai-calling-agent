@@ -186,12 +186,23 @@ async def _elevenlabs_synthesize(request: SynthRequest):
     if not ELEVENLABS_API_KEY:
         raise HTTPException(status_code=500, detail="ELEVENLABS_API_KEY is not configured")
 
-    # Pick voice by gender (or explicit voice_id)
+    # Pick voice: ElevenLabs voice IDs are 20-char alphanumeric strings.
+    # Sarvam voice names ("priya", "ritu", "rahul", etc.) are NOT valid ElevenLabs IDs —
+    # fall back to the configured voice map by gender when we detect one.
     voice_id = (request.voice_id or "").strip()
-    if voice_id and not voice_id.startswith("sarvam://"):
+    is_valid_eleven_id = (
+        len(voice_id) >= 15
+        and not voice_id.startswith("sarvam://")
+        and not voice_id.startswith("elevenlabs://")
+        and "/" not in voice_id
+        and " " not in voice_id
+    )
+    if is_valid_eleven_id:
         selected_voice = voice_id
     else:
         selected_voice = ELEVENLABS_VOICE_MAP.get(request.gender, ELEVENLABS_VOICE_MAP["female"])
+
+    logger.info(f"[elevenlabs-tts] voice={selected_voice} gender={request.gender} requested_id={voice_id!r}")
 
     text = request.text[:2500]
     payload = {
@@ -202,8 +213,8 @@ async def _elevenlabs_synthesize(request: SynthRequest):
             "similarity_boost": ELEVENLABS_SIMILARITY_BOOST,
             "style": ELEVENLABS_STYLE,
             "use_speaker_boost": True,
+            "speed": ELEVENLABS_SPEED,
         },
-        "speed": ELEVENLABS_SPEED,
     }
     headers = {
         "xi-api-key": ELEVENLABS_API_KEY,
