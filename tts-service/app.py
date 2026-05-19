@@ -229,6 +229,7 @@ async def _elevenlabs_synthesize(request: SynthRequest):
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             detail = response.text
+            logger.error(f"[elevenlabs-tts] HTTP {exc.response.status_code} voice={selected_voice} model={ELEVENLABS_MODEL} url={url} body={detail[:500]}")
             raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
 
     audio_bytes = response.content
