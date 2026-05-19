@@ -626,16 +626,26 @@ async def voice_catalog():
         response = await client.get(f"{tts_service_url}/voices")
         response.raise_for_status()
     catalog = response.json().get("voices", [])
+    # Detect active provider from returned voices
+    has_elevenlabs = any(str(v.get("path") or "").startswith("elevenlabs://") for v in catalog)
     voices = []
     for voice in catalog:
-        provider = "sarvam" if str(voice.get("path") or voice.get("file_path") or "").startswith("sarvam://") else "tts"
+        path = str(voice.get("path") or voice.get("file_path") or "")
+        if path.startswith("sarvam://") and has_elevenlabs:
+            continue  # hide Sarvam voices when ElevenLabs is active
+        if path.startswith("elevenlabs://"):
+            provider = "elevenlabs"
+        elif path.startswith("sarvam://"):
+            provider = "sarvam"
+        else:
+            provider = "tts"
         voices.append(
             {
-                "id": voice.get("voice_id") or voice.get("id") or voice.get("path"),
-                "label": voice.get("voice_id") or voice.get("label") or voice.get("path"),
+                "id": voice.get("voice_id") or voice.get("id") or path,
+                "label": voice.get("label") or voice.get("voice_id") or path,
                 "gender": voice.get("gender", "female"),
                 "language": voice.get("language", "en-IN"),
-                "file_path": voice.get("path") or voice.get("file_path") or voice.get("voice_id"),
+                "file_path": path or voice.get("voice_id"),
                 "provider": provider,
             }
         )
@@ -658,16 +668,25 @@ async def list_voices(tenant_id: str, request: Request):
     except Exception:
         provider_voices = []
 
+    # Detect if ElevenLabs is active — hide legacy Sarvam voices if so
+    has_elevenlabs = any(str(v.get("path") or v.get("file_path") or "").startswith("elevenlabs://") for v in provider_voices)
+
     merged = []
     seen = set()
-    for voice in [*stored_voices, *provider_voices]:
-        identifier = voice.get("file_path") or voice.get("voice_id") or voice.get("id")
+    for voice in [*provider_voices, *stored_voices]:  # provider first so ElevenLabs wins dedup
+        identifier = voice.get("file_path") or voice.get("path") or voice.get("voice_id") or voice.get("id")
         if identifier in seen:
             continue
         seen.add(identifier)
+        path = str(voice.get("file_path") or voice.get("path") or "")
+        # Skip Sarvam voices when ElevenLabs is active
+        if has_elevenlabs and path.startswith("sarvam://"):
+            continue
         inferred_provider = voice.get("provider")
         if not inferred_provider:
-            if str(voice.get("file_path") or voice.get("path") or "").startswith("sarvam://"):
+            if path.startswith("elevenlabs://"):
+                inferred_provider = "elevenlabs"
+            elif path.startswith("sarvam://"):
                 inferred_provider = "sarvam"
             else:
                 inferred_provider = "uploaded" if voice.get("id") else "tts"
@@ -677,7 +696,7 @@ async def list_voices(tenant_id: str, request: Request):
                 "label": voice.get("label") or voice.get("voice_id") or identifier,
                 "gender": voice.get("gender", "female"),
                 "language": voice.get("language", "en-IN"),
-                "file_path": voice.get("file_path") or voice.get("path") or voice.get("voice_id") or identifier,
+                "file_path": path or voice.get("voice_id") or identifier,
                 "provider": inferred_provider,
             }
         )

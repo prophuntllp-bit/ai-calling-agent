@@ -365,11 +365,23 @@ async def register_voice(client_id: str = Form(...), voice_name: str = Form("def
 async def list_voices(language: str | None = None):
     local_voices = [voice.model_dump() for voice in voice_library.list_available_voices(language)]
     if TTS_PROVIDER == "elevenlabs":
+        female_id = ELEVENLABS_VOICE_MAP["female"]
+        male_id   = ELEVENLABS_VOICE_MAP["male"]
         eleven_voices = [
-            {"voice_id": ELEVENLABS_VOICE_MAP["female"], "language": "hi-IN", "gender": "female", "variant": 1, "path": f"elevenlabs://{ELEVENLABS_VOICE_MAP['female']}"},
-            {"voice_id": ELEVENLABS_VOICE_MAP["male"],   "language": "hi-IN", "gender": "male",   "variant": 1, "path": f"elevenlabs://{ELEVENLABS_VOICE_MAP['male']}"},
+            {
+                "voice_id": female_id,
+                "label": os.getenv("ELEVENLABS_VOICE_FEMALE_LABEL", "Monika — Hindi (Female)"),
+                "language": "hi-IN", "gender": "female", "variant": 1,
+                "path": f"elevenlabs://{female_id}",
+            },
+            {
+                "voice_id": male_id,
+                "label": os.getenv("ELEVENLABS_VOICE_MALE_LABEL", "Arjun — Hindi (Male)"),
+                "language": "hi-IN", "gender": "male", "variant": 1,
+                "path": f"elevenlabs://{male_id}",
+            },
         ]
-        return {"voices": [*local_voices, *eleven_voices]}
+        return {"voices": eleven_voices}  # only ElevenLabs voices — no Sarvam leftovers
     if TTS_PROVIDER == "sarvam":
         return {"voices": [*local_voices, *_filter_sarvam_voices(language)]}
     return {"voices": local_voices}
