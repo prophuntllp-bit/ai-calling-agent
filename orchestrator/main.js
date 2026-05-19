@@ -410,6 +410,7 @@ RULES (strictly follow):
 5. Ask one qualification question at a time — BHK preference or site visit interest.
 6. Close toward a site visit: offer specific days ("aaj ya kal?").
 7. If asked if you are AI, say you are calling from the developer's team.
+8. NEVER repeat your introduction (Namaste/name) after the first greeting. If lead says "hello", "ji", or "haan", go straight to asking what they'd like to know — do NOT re-introduce yourself.
 
 Return this JSON silently when closing:
 OUTCOME:{"status":"interested","site_visit":false,"callback_date":null,"qualification":{"bhk":"","budget_range":"","purpose":"","timeline":""},"notes":""}`;
@@ -675,6 +676,19 @@ function buildRuleBasedReply(session, userText = "") {
     );
   }
   if (guidedState === "awaiting_configuration" && !negativeIntent) {
+    // Check one more time before repeating — STT may produce varied forms of "2 BHK"
+    const impliedTwo = /\b(2|do|dono|two|to\b|too\b)\b/.test(text);
+    const impliedThree = /\b(3|teen|three|tin)\b/.test(text);
+    if (impliedTwo || impliedThree) {
+      const cfg = isHindi
+        ? (impliedThree ? "teen BHK" : "do BHK")
+        : (impliedThree ? "three BHK" : "two BHK");
+      session.guidedState = "awaiting_callback_confirmation";
+      return T(
+        `Got it, ${impliedThree ? "three BHK" : "two BHK"}. I can arrange a sales callback today with the live quote. Should I do that?`,
+        `Theek hai, ${cfg}. Main aaj hi sales team ka callback arrange kar sakti hoon live quote ke saath. Karoon?`
+      );
+    }
     return T(
       `Please tell me, do you want the two BHK price or the three BHK price?`,
       `Batayein, do BHK ka rate chahiye ya teen BHK ka?`
@@ -770,16 +784,27 @@ function isTerminalGuidedState(session) {
 }
 
 function shouldUseGuidedReply(session, userText = "") {
-  const text = String(userText || "").toLowerCase();
+  const text = String(userText || "").toLowerCase().trim();
   const guidedState = session?.guidedState || null;
+  const hasKB = (session?.dynamicVariables?.knowledge_base?.length || 0) > 50;
 
-  // If KB context is loaded, let the LLM use it — guided replies can't access KB data.
-  // We still use guided for terminal states (callback confirmation, farewell) to close fast.
-  if (session?.dynamicVariables?.knowledge_base?.length > 50) {
-    // Only keep guided for active state machine flows — not for open-ended discovery
-    const terminalFlow = ["awaiting_callback_confirmation", "awaiting_visit_day",
-                          "callback_confirmed", "callback_declined", "closed"].includes(guidedState);
-    return terminalFlow;
+  if (hasKB) {
+    // Terminal states: always guided — quick, reliable close without LLM
+    if (["awaiting_callback_confirmation", "awaiting_visit_day",
+         "callback_confirmed", "callback_declined", "closed"].includes(guidedState)) {
+      return true;
+    }
+    // Active state machine (e.g., awaiting_configuration, location_shared):
+    // continue guided so the flow completes correctly — LLM loses track of state
+    if (guidedState && guidedState !== "open_discovery") return true;
+
+    // Simple first-turn acknowledgment ("ji", "hello", "haan"): use guided to avoid
+    // LLM re-generating the intro greeting instead of advancing the conversation
+    const isSimpleAck = /^(hi|hello|ji|haan|ha|yes|yep|yeah|ok|okay|haan ji|ji haan|namaste|hello ji|speak|bolo|batao|boliye|bataiye|sure|theek|theek hai)[\s,.!?]*$/.test(text);
+    if (isSimpleAck) return true;
+
+    // Open-ended query with KB loaded → LLM answers from KB
+    return false;
   }
 
   // No KB — use guided for matching patterns or when already in a guided state
@@ -2040,15 +2065,20 @@ wss.on("connection", (ws, req) => {
             }
             if (session.pendingGreetingAudio) {
               const pending = session.pendingGreetingAudio;
+              // 2500ms delay: EnableX bridges audio ~1-2s after stream_started;
+              // playing sooner sends audio before the PSTN leg is fully bridged
+              // (caller hears silence even though audio appears in server recording)
               setTimeout(() => {
+                if (session.closed) return; // call may have ended during delay
                 if (sendEnablexMedia(ws, session, pending, "opening-greeting")) {
                   recordAgentAudio(session, pending, "opening-greeting").catch((error) =>
                     console.warn("[recording] opening capture failed", error.message)
                   );
                   session.pendingGreetingAudio = null;
                   session.openingPlayedAt = nowIso();
+                  console.log(`[enablex-media] opening greeting played callSid=${session.callSid}`);
                 }
-              }, 700);
+              }, 2500);
             }
           }
 
