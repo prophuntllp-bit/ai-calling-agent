@@ -789,21 +789,17 @@ function shouldUseGuidedReply(session, userText = "") {
   const hasKB = (session?.dynamicVariables?.knowledge_base?.length || 0) > 50;
 
   if (hasKB) {
-    // Terminal states: always guided — quick, reliable close without LLM
-    if (["awaiting_callback_confirmation", "awaiting_visit_day",
-         "callback_confirmed", "callback_declined", "closed"].includes(guidedState)) {
-      return true;
-    }
-    // Active state machine (e.g., awaiting_configuration, location_shared):
-    // continue guided so the flow completes correctly — LLM loses track of state
-    if (guidedState && guidedState !== "open_discovery") return true;
+    // Any active guided state → keep guided running (maintains state machine reliably)
+    // LLM loses track of state; guided is fast and deterministic
+    if (guidedState) return true;
 
-    // Simple first-turn acknowledgment ("ji", "hello", "haan"): use guided to avoid
-    // LLM re-generating the intro greeting instead of advancing the conversation
-    const isSimpleAck = /^(hi|hello|ji|haan|ha|yes|yep|yeah|ok|okay|haan ji|ji haan|namaste|hello ji|speak|bolo|batao|boliye|bataiye|sure|theek|theek hai)[\s,.!?]*$/.test(text);
-    if (isSimpleAck) return true;
+    // No state yet — check if it's a pattern guided can handle well
+    // (price, location, BHK, visit, farewell — all covered by buildRuleBasedReply)
+    const handledByGuided = /price|cost|rate|budget|daam|kimat|kitna|kitne|bhk|vhk|location|where|kahan|jagah|visit|site|callback|schedule|bye|goodbye|alvida|not interested|nahi|na\b|haan|ji\b|hello|hi\b|batao|bataiye|yes|no\b/.test(text);
+    if (handledByGuided) return true;
 
-    // Open-ended query with KB loaded → LLM answers from KB
+    // Truly open-ended KB question (amenities, floor plan, possession, RERA, etc.)
+    // → let LLM answer from KB
     return false;
   }
 
@@ -1604,10 +1600,16 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     console.log(`[stt] result: "${transcription?.text || ""}" lang=${transcription?.language || ""} elapsed=${Date.now()-t0}ms`);
     if (!transcription.text) return;
 
-    // Allow short acks ("haan", "ok", "ji") — only filter pure noise (< 2 words)
+    // Drop only completely empty transcriptions — even 1-word inputs like
+    // "do" (Hindi for 2), "ji", "haan" are valid user responses
     const wordCount = transcription.text.trim().split(/\s+/).filter(w => w.length > 0).length;
-    if (wordCount < 2) {
-      console.log(`[enablex-media] skipping noise callSid=${callSid} words=${wordCount}`);
+    if (wordCount < 1) {
+      console.log(`[enablex-media] skipping empty transcription callSid=${callSid}`);
+      return;
+    }
+    // Single-character noise filter (not a real word)
+    if (wordCount === 1 && transcription.text.trim().length <= 1) {
+      console.log(`[enablex-media] skipping single-char noise callSid=${callSid} text="${transcription.text}"`);
       return;
     }
 
@@ -1640,7 +1642,10 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     }
 
     if (isTerminalGuidedState(session)) {
+      console.log(`[agent] terminal state reached, scheduling hangup callSid=${callSid} state=${session.guidedState}`);
       scheduleAgentSideHangup(ws, session, session.guidedState);
+    } else {
+      console.log(`[agent] continuing call callSid=${callSid} guidedState=${session.guidedState || "null"}`);
     }
 
     console.log(`[agent] total_latency=${Date.now()-t0}ms callSid=${callSid}`);
@@ -2065,9 +2070,8 @@ wss.on("connection", (ws, req) => {
             }
             if (session.pendingGreetingAudio) {
               const pending = session.pendingGreetingAudio;
-              // 2500ms delay: EnableX bridges audio ~1-2s after stream_started;
-              // playing sooner sends audio before the PSTN leg is fully bridged
-              // (caller hears silence even though audio appears in server recording)
+              // 1200ms delay: enough for EnableX PSTN bridge to stabilize after
+              // stream_started without causing a 4-second total wait for the caller
               setTimeout(() => {
                 if (session.closed) return; // call may have ended during delay
                 if (sendEnablexMedia(ws, session, pending, "opening-greeting")) {
