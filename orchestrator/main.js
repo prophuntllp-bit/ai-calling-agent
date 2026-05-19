@@ -583,8 +583,49 @@ const SARVAM_LANG_MAP = {
 };
 
 async function transcribeAudioDirect(audioBuffer, language = "auto") {
+  const elevenKey = process.env.ELEVENLABS_API_KEY;
   const sarvamKey = process.env.SARVAM_API_KEY;
-  // Fall back to microservice if no key (shouldn't happen — key is set on Railway)
+
+  // ── ElevenLabs Scribe STT (preferred when key is set) ──────────────────────
+  if (elevenKey) {
+    const wav = ensureWavBuffer(audioBuffer);
+    const form = new FormData();
+    form.append("file", wav, { filename: "audio.wav", contentType: "audio/wav" });
+    form.append("model_id", "scribe_v1");
+    // Map short codes to BCP-47; "auto" → let ElevenLabs auto-detect
+    const ELEVEN_LANG_MAP = {
+      "hi": "hi", "en": "en", "mr": "mr", "ta": "ta",
+      "te": "te", "kn": "kn", "gu": "gu", "bn": "bn", "pa": "pa",
+    };
+    const langCode = language === "auto" ? null : (ELEVEN_LANG_MAP[language] || language);
+    if (langCode) form.append("language_code", langCode);
+
+    try {
+      const t0 = Date.now();
+      const response = await timed("stt_elevenlabs", () =>
+        axios.post(
+          "https://api.elevenlabs.io/v1/speech-to-text",
+          form,
+          {
+            headers: { ...form.getHeaders(), "xi-api-key": elevenKey },
+            timeout: 15000,
+          }
+        )
+      );
+      const d = response.data;
+      const detectedLang = d.language_code?.split("-")[0] || language;
+      console.log(`[stt-elevenlabs] latency=${Date.now()-t0}ms lang=${detectedLang} text="${(d.text || "").slice(0, 80)}"`);
+      return {
+        text:     d.text || "",
+        language: detectedLang,
+      };
+    } catch (err) {
+      console.warn("[stt-elevenlabs] failed, falling back to Sarvam:", err.message);
+      // fall through to Sarvam below
+    }
+  }
+
+  // ── Sarvam STT fallback ────────────────────────────────────────────────────
   if (!sarvamKey) return transcribeAudio(audioBuffer, language);
 
   const wav = ensureWavBuffer(audioBuffer);

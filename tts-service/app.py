@@ -45,6 +45,28 @@ SARVAM_TTS_LANGUAGE = os.getenv("SARVAM_TTS_LANGUAGE", "en-IN")
 SARVAM_TTS_PACE = float(os.getenv("SARVAM_TTS_PACE", "1.0"))
 SARVAM_TTS_SAMPLE_RATE = int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "8000"))
 
+# ── ElevenLabs ────────────────────────────────────────────────────────────────
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_API_URL = os.getenv("ELEVENLABS_API_URL", "https://api.elevenlabs.io").rstrip("/")
+# eleven_turbo_v2_5: fastest, multilingual (Hindi supported)
+ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
+# Default Hindi female voice — Rachel works well for en-IN; set your preferred voice ID here
+# Common multilingual voices: Aria (21m00Tcm4TlvDq8ikWAM), Rachel (21m00Tcm4TlvDq8ikWAM)
+# For Hindi: use "Priya" equivalent or a custom cloned voice
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "cgSgspJ2msm6clMCkdW9")
+# pcm_8000 = raw 8kHz 16-bit little-endian PCM — zero resampling needed for EnableX
+ELEVENLABS_OUTPUT_FORMAT = os.getenv("ELEVENLABS_OUTPUT_FORMAT", "pcm_8000")
+ELEVENLABS_STABILITY = float(os.getenv("ELEVENLABS_STABILITY", "0.5"))
+ELEVENLABS_SIMILARITY_BOOST = float(os.getenv("ELEVENLABS_SIMILARITY_BOOST", "0.75"))
+ELEVENLABS_STYLE = float(os.getenv("ELEVENLABS_STYLE", "0.0"))
+ELEVENLABS_SPEED = float(os.getenv("ELEVENLABS_SPEED", "1.0"))
+
+# Voice map: gender → voice_id (override with env vars)
+ELEVENLABS_VOICE_MAP = {
+    "female": os.getenv("ELEVENLABS_VOICE_FEMALE", ELEVENLABS_VOICE_ID),
+    "male":   os.getenv("ELEVENLABS_VOICE_MALE",   os.getenv("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")),
+}
+
 SARVAM_VOICES = [
     {"voice_id": "priya", "language": "en-IN", "gender": "female", "variant": 1, "path": "sarvam://priya"},
     {"voice_id": "ritu", "language": "hi-IN", "gender": "female", "variant": 1, "path": "sarvam://ritu"},
@@ -160,6 +182,86 @@ def _preprocess_tts_text(text: str, language: str) -> str:
     return text
 
 
+async def _elevenlabs_synthesize(request: SynthRequest):
+    if not ELEVENLABS_API_KEY:
+        raise HTTPException(status_code=500, detail="ELEVENLABS_API_KEY is not configured")
+
+    # Pick voice by gender (or explicit voice_id)
+    voice_id = (request.voice_id or "").strip()
+    if voice_id and not voice_id.startswith("sarvam://"):
+        selected_voice = voice_id
+    else:
+        selected_voice = ELEVENLABS_VOICE_MAP.get(request.gender, ELEVENLABS_VOICE_MAP["female"])
+
+    text = request.text[:2500]
+    payload = {
+        "text": text,
+        "model_id": ELEVENLABS_MODEL,
+        "voice_settings": {
+            "stability": ELEVENLABS_STABILITY,
+            "similarity_boost": ELEVENLABS_SIMILARITY_BOOST,
+            "style": ELEVENLABS_STYLE,
+            "use_speaker_boost": True,
+        },
+        "speed": ELEVENLABS_SPEED,
+    }
+    headers = {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg" if ELEVENLABS_OUTPUT_FORMAT == "mp3_44100_128" else "application/octet-stream",
+    }
+    url = f"{ELEVENLABS_API_URL}/v1/text-to-speech/{selected_voice}?output_format={ELEVENLABS_OUTPUT_FORMAT}"
+
+    async with httpx.AsyncClient(timeout=TTS_API_TIMEOUT_SEC) as client:
+        response = await client.post(url, json=payload, headers=headers)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = response.text
+            raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
+
+    audio_bytes = response.content
+    if not audio_bytes:
+        raise HTTPException(status_code=502, detail="ElevenLabs returned no audio data")
+
+    # pcm_8000 → wrap in WAV header so downstream code can parse it uniformly
+    if ELEVENLABS_OUTPUT_FORMAT == "pcm_8000":
+        audio_bytes = _wrap_pcm_as_wav(audio_bytes, sample_rate=8000, channels=1, bits=16)
+        content_type = "audio/wav"
+    elif ELEVENLABS_OUTPUT_FORMAT.startswith("pcm_"):
+        sr = int(ELEVENLABS_OUTPUT_FORMAT.split("_")[1])
+        audio_bytes = _wrap_pcm_as_wav(audio_bytes, sample_rate=sr, channels=1, bits=16)
+        content_type = "audio/wav"
+    else:
+        content_type = "audio/mpeg"
+
+    return audio_bytes, content_type, selected_voice
+
+
+def _wrap_pcm_as_wav(pcm_bytes: bytes, sample_rate: int = 8000, channels: int = 1, bits: int = 16) -> bytes:
+    """Wrap raw PCM bytes in a minimal RIFF/WAV header."""
+    import struct
+    data_size = len(pcm_bytes)
+    byte_rate = sample_rate * channels * bits // 8
+    block_align = channels * bits // 8
+    buf = io.BytesIO()
+    buf.write(b"RIFF")
+    buf.write(struct.pack("<I", 36 + data_size))
+    buf.write(b"WAVE")
+    buf.write(b"fmt ")
+    buf.write(struct.pack("<I", 16))           # PCM chunk size
+    buf.write(struct.pack("<H", 1))            # AudioFormat = PCM
+    buf.write(struct.pack("<H", channels))
+    buf.write(struct.pack("<I", sample_rate))
+    buf.write(struct.pack("<I", byte_rate))
+    buf.write(struct.pack("<H", block_align))
+    buf.write(struct.pack("<H", bits))
+    buf.write(b"data")
+    buf.write(struct.pack("<I", data_size))
+    buf.write(pcm_bytes)
+    return buf.getvalue()
+
+
 async def _sarvam_synthesize(request: SynthRequest):
     if not SARVAM_API_KEY:
         raise HTTPException(status_code=500, detail="SARVAM_API_KEY is not configured")
@@ -197,6 +299,18 @@ async def synthesize(request: SynthRequest):
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Text is required")
     emotion = request.emotion or map_emotion(request.text, request.context)
+    if TTS_PROVIDER == "elevenlabs":
+        audio_bytes, content_type, voice_used = await _elevenlabs_synthesize(request)
+        return StreamingResponse(
+            io.BytesIO(audio_bytes),
+            media_type=content_type,
+            headers={
+                "X-Emotion": emotion,
+                "X-Language": _normalize_language(request.language),
+                "X-TTS-Provider": "elevenlabs",
+                "X-TTS-Voice": voice_used,
+            },
+        )
     if TTS_PROVIDER == "sarvam":
         audio_bytes, content_type = await _sarvam_synthesize(request)
         return StreamingResponse(
@@ -239,6 +353,12 @@ async def register_voice(client_id: str = Form(...), voice_name: str = Form("def
 @app.get("/voices")
 async def list_voices(language: str | None = None):
     local_voices = [voice.model_dump() for voice in voice_library.list_available_voices(language)]
+    if TTS_PROVIDER == "elevenlabs":
+        eleven_voices = [
+            {"voice_id": ELEVENLABS_VOICE_MAP["female"], "language": "hi-IN", "gender": "female", "variant": 1, "path": f"elevenlabs://{ELEVENLABS_VOICE_MAP['female']}"},
+            {"voice_id": ELEVENLABS_VOICE_MAP["male"],   "language": "hi-IN", "gender": "male",   "variant": 1, "path": f"elevenlabs://{ELEVENLABS_VOICE_MAP['male']}"},
+        ]
+        return {"voices": [*local_voices, *eleven_voices]}
     if TTS_PROVIDER == "sarvam":
         return {"voices": [*local_voices, *_filter_sarvam_voices(language)]}
     return {"voices": local_voices}
@@ -246,6 +366,17 @@ async def list_voices(language: str | None = None):
 
 @app.get("/health")
 async def health():
+    if TTS_PROVIDER == "elevenlabs":
+        return {
+            "status": "ok",
+            "provider": "elevenlabs",
+            "engine": ELEVENLABS_MODEL,
+            "upstream": ELEVENLABS_API_URL,
+            "output_format": ELEVENLABS_OUTPUT_FORMAT,
+            "voice_female": ELEVENLABS_VOICE_MAP["female"],
+            "voice_male": ELEVENLABS_VOICE_MAP["male"],
+            "sample_ready": bool(ELEVENLABS_API_KEY),
+        }
     if TTS_PROVIDER == "sarvam":
         return {
             "status": "ok",
