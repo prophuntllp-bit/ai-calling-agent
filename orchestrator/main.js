@@ -636,21 +636,22 @@ function buildRuleBasedReply(session, userText = "") {
   const isHindi = lang === "hi";
   const kbPriceSnippet = extractPriceFromKB(session.dynamicVariables?.knowledge_base || "");
 
-  const wantsConfiguration = /(?:\b|[^a-z0-9])(?:1|one|ek|2|two|do|3|three|teen|4|four|char)\s*(?:b|v|d)?\s*h\s*k\b|bhk|vhk|dhk|dbhk|vbhk|configuration|config|flat size|carpet|sq ?ft/.test(text);
-  const wantsTwoBhk = /(?:2|two|to|too|do|d)\s*(?:b|v|d)?\s*h\s*k|dbhk|2bhk|two bhk|do bhk/.test(text);
-  const wantsThreeBhk = /(?:3|three|tree|free|teen)\s*(?:b|v|d)?\s*h\s*k|3vhk|3bhk|three bhk|teen bhk/.test(text);
-  // Positive: English + Hindi (haan, ji, bilkul, theek, sahi, zaroor)
-  const positiveIntent = /yes|yeah|yep|sure|proceed|tell me|go ahead|interested|ok|okay|alright|all right|hello|hi|speaking|here|haan|ji\b|bilkul|theek|sahi|zaroor|batao|bataiye/.test(text);
-  // Explicit farewell: English + Hindi (bye, alvida, rakhta, band, chhodo)
-  const explicitFarewell = /\b(bye|goodbye|good bye|not interested|no thank|stop calling|remove|alvida|band karo|chhodo|mujhe nahi chahiye)\b/.test(text);
-  // Negative: English + Hindi (nahi, nahi chahiye, baad mein, busy)
-  const negativeIntent = /bye|not interested|stop|later|no\b|not now|busy|nahi\b|nahin\b|na\b|mat\b|baad mein|abhi nahi/.test(text);
+  // ── Intent patterns — Latin (Romanised Hindi) + Devanagari (Sarvam STT output) ──
+  const wantsConfiguration = /(?:\b|[^a-z0-9])(?:1|one|ek|2|two|do|3|three|teen|4|four|char)\s*(?:b|v|d)?\s*h\s*k\b|bhk|vhk|dhk|dbhk|vbhk|configuration|config|flat size|carpet|sq ?ft|बीएचके|बी\.?एच\.?के|bhk/.test(text);
+  const wantsTwoBhk = /(?:2|two|to|too|do|d)\s*(?:b|v|d)?\s*h\s*k|dbhk|2bhk|two bhk|do bhk|दो\s*(?:बीएचके|बी\s*एच\s*के|bhk)|2\s*(?:बीएचके|bhk)/.test(text);
+  const wantsThreeBhk = /(?:3|three|tree|free|teen)\s*(?:b|v|d)?\s*h\s*k|3vhk|3bhk|three bhk|teen bhk|तीन\s*(?:बीएचके|बी\s*एच\s*के|bhk)|3\s*(?:बीएचके|bhk)/.test(text);
+  // Positive — Latin Romanised + Devanagari
+  const positiveIntent = /yes|yeah|yep|sure|proceed|tell me|go ahead|interested|ok|okay|alright|all right|hello|hi|speaking|here|haan|ji\b|bilkul|theek|sahi|zaroor|batao|bataiye|हाँ|हां|जी|ठीक|बिल्कुल|ज़रूर|जरूर|बताओ|बताइए|बोलिए|सुनिए|सुनें|हा\b/.test(text);
+  // Explicit farewell — Latin + Devanagari
+  const explicitFarewell = /\b(bye|goodbye|good bye|not interested|no thank|stop calling|remove|alvida|band karo|chhodo|mujhe nahi chahiye)\b|अलविदा|बंद करो|नहीं चाहिए|छोड़ो/.test(text);
+  // Negative — Latin + Devanagari
+  const negativeIntent = /bye|not interested|stop|later|no\b|not now|busy|nahi\b|nahin\b|na\b|mat\b|baad mein|abhi nahi|नहीं|नही|ना\b|मत\b|बाद में|अभी नहीं|व्यस्त|बिज़ी/.test(text);
   const guidedState = session.guidedState || null;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const T = (en, hi) => isHindi ? hi : en;
 
-  if (/price|cost|rate|budget|how much|pricing|daam|kimat|rate|kitna|kitne|paisa|qeemat/.test(text)) {
+  if (/price|cost|rate|budget|how much|pricing|daam|kimat|kitna|kitne|paisa|qeemat|रेट|दाम|कीमत|क़ीमत|कितना|कितने|पैसे|रुपए|रुपये|प्राइस|बजट/.test(text)) {
     if (kbPriceSnippet) {
       // We have actual price data from KB — give it directly
       session.guidedState = "awaiting_callback_confirmation";
@@ -735,14 +736,14 @@ function buildRuleBasedReply(session, userText = "") {
       `Main ${project} ke baare mein rate, location ya site visit ki jaankari de sakti hoon. Pehle kya jaanna chahenge?`
     );
   }
-  if (/location|where|near|connectivity|area|kahan|jagah|location/.test(text)) {
+  if (/location|where|near|connectivity|area|kahan|jagah|लोकेशन|कहाँ|कहां|जगह|स्थान|एड्रेस|पता|नज़दीक|पास में/.test(text)) {
     session.guidedState = "location_shared";
     return T(
       `${project} is in Pune with strong city connectivity. Would you like the pricing next?`,
       `${project} Pune mein hai, city connectivity bahut acchi hai. Ab rate bata doon?`
     );
   }
-  if (/visit|site|schedule|appointment|callback|dekhna|visit|milna/.test(text)) {
+  if (/visit|site|schedule|appointment|callback|dekhna|milna|विज़िट|विजिट|साइट|देखना|मिलना|अपॉइंटमेंट/.test(text)) {
     session.guidedState = "awaiting_visit_day";
     return T(
       `Sure. I can note a site visit request. Which works better, today or tomorrow?`,
@@ -794,8 +795,8 @@ function shouldUseGuidedReply(session, userText = "") {
     if (guidedState) return true;
 
     // No state yet — check if it's a pattern guided can handle well
-    // (price, location, BHK, visit, farewell — all covered by buildRuleBasedReply)
-    const handledByGuided = /price|cost|rate|budget|daam|kimat|kitna|kitne|bhk|vhk|location|where|kahan|jagah|visit|site|callback|schedule|bye|goodbye|alvida|not interested|nahi|na\b|haan|ji\b|hello|hi\b|batao|bataiye|yes|no\b/.test(text);
+    // Includes both Latin/Romanised Hindi AND Devanagari (Sarvam STT output)
+    const handledByGuided = /price|cost|rate|budget|daam|kimat|kitna|kitne|bhk|vhk|location|where|kahan|jagah|visit|site|callback|schedule|bye|goodbye|alvida|not interested|nahi|na\b|haan|ji\b|hello|hi\b|batao|bataiye|yes|no\b|रेट|दाम|कीमत|कितना|बीएचके|लोकेशन|कहाँ|कहां|जगह|विज़िट|विजिट|साइट|देखना|नहीं|नही|ना\b|हाँ|हां|जी|ठीक|बताओ|बताइए/.test(text);
     if (handledByGuided) return true;
 
     // Truly open-ended KB question (amenities, floor plan, possession, RERA, etc.)
@@ -2070,19 +2071,23 @@ wss.on("connection", (ws, req) => {
             }
             if (session.pendingGreetingAudio) {
               const pending = session.pendingGreetingAudio;
-              // 1200ms delay: enough for EnableX PSTN bridge to stabilize after
-              // stream_started without causing a 4-second total wait for the caller
+              // Fallback timer: plays opening if first-media path hasn't fired in 1200ms.
+              // IMPORTANT: check openingPlayedAt — first inbound media packet plays the
+              // opening immediately (see first-media handler below). Without this guard,
+              // opening plays TWICE: once at ~200ms (first-media) and again at 1200ms,
+              // which the caller hears as opening → 1s gap → opening again (the "4s delay").
               setTimeout(() => {
-                if (session.closed) return; // call may have ended during delay
+                if (session.closed) return;
+                if (session.openingPlayedAt) return; // already played via first-media path
                 if (sendEnablexMedia(ws, session, pending, "opening-greeting")) {
                   recordAgentAudio(session, pending, "opening-greeting").catch((error) =>
                     console.warn("[recording] opening capture failed", error.message)
                   );
                   session.pendingGreetingAudio = null;
                   session.openingPlayedAt = nowIso();
-                  console.log(`[enablex-media] opening greeting played callSid=${session.callSid}`);
+                  console.log(`[enablex-media] opening played via fallback-timer callSid=${session.callSid}`);
                 }
-              }, 2500);
+              }, 1200);
             }
           }
 
@@ -2120,12 +2125,13 @@ wss.on("connection", (ws, req) => {
           const greeting = await getOpeningMessage(session);
           session.pendingGreetingAudio = await synthesizeSpeech(session, greeting);
         }
-        if (session.pendingGreetingAudio) {
+        if (session.pendingGreetingAudio && !session.openingPlayedAt) {
           const pending = session.pendingGreetingAudio;
           if (sendEnablexMedia(ws, session, pending, "opening-greeting-on-first-media")) {
             await recordAgentAudio(session, pending, "opening-greeting");
             session.pendingGreetingAudio = null;
             session.openingPlayedAt = nowIso();
+            console.log(`[enablex-media] opening played via first-media callSid=${session.callSid}`);
           }
         }
         audioBuffer = decodeEnablexInboundMedia(event);
