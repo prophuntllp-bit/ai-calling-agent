@@ -1,14 +1,14 @@
 const fallbackPhrases = {
-  hi: "Ek second, main check karta hoon.",
-  mr: "Thoda vel dya, mi tapasun sangto.",
-  en: "One moment, let me check that for you.",
-  ta: "Oru nimisham, naan check panren.",
-  te: "Oka nimisham, nenu chusi cheptanu.",
-  kn: "Ondu nimisha, nodi helthini.",
-  ml: "Oru nimisham, njan nokki parayam.",
-  bn: "Ekto opekkha korun, ami dekhe bolchi.",
-  gu: "Ek minute, hu check kari ne kahu chu.",
-  pa: "Ik minute, main check karke dassda haan.",
+  hi: "Kya aap do BHK ya teen BHK mein interested hain?",
+  mr: "Tumhala 2 BHK pahije ka 3 BHK?",
+  en: "Are you interested in a two BHK or three BHK?",
+  ta: "Neengal 2 BHK vendum a, 3 BHK vendum a?",
+  te: "Meeru 2 BHK kavali, 3 BHK kavali?",
+  kn: "Neevu 2 BHK beku, 3 BHK beku?",
+  ml: "Ningalk 2 BHK veno, 3 BHK veno?",
+  bn: "Apnar ki 2 BHK lagbe na 3 BHK?",
+  gu: "Tamne 2 BHK joiye che ke 3 BHK?",
+  pa: "Tuhanu 2 BHK chahida hai ke 3 BHK?",
 };
 
 const voiceMap = {
@@ -69,16 +69,23 @@ class LanguageManager {
 
     const currentVotes = session.languageVotes[currentLanguage] || 0;
     const nextVotes = session.languageVotes[normalizedLanguage] || 0;
-    const shouldSwitch =
-      hasMeaningfulText(text) &&
-      (
-        currentLanguage === baseLanguage(session.preferredLanguage || "auto") ||
-        nextVotes >= currentVotes ||
-        nextVotes >= 2
-      );
+
+    // Switch immediately on the first detection of a new language if:
+    // 1. The caller explicitly changed language (first utterance in new language)
+    // 2. OR the initial language was a preference (not verified by STT yet)
+    // 3. OR new language has 2+ votes (confirmed pattern, not noise)
+    const initialPreference = currentLanguage === baseLanguage(session.preferredLanguage || "auto");
+    const confirmedSwitch = nextVotes >= 2;
+    const firstDetectedSwitch = hasMeaningfulText(text) && nextVotes === 1 && (initialPreference || !session.languageConfirmed);
+    const shouldSwitch = firstDetectedSwitch || confirmedSwitch;
 
     if (shouldSwitch) {
+      const prevLang = session.detectedLanguage;
       session.detectedLanguage = normalizedLanguage;
+      session.languageConfirmed = true;
+      if (prevLang !== normalizedLanguage) {
+        console.log(`[lang-switch] ${prevLang} → ${normalizedLanguage} (votes: ${nextVotes})`);
+      }
     }
   }
 

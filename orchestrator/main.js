@@ -901,14 +901,19 @@ function emotionFromContext(text = "", state = {}) {
   return "neutral";
 }
 
+// Sarvam AI voice roster — female & male per language
+// All voice IDs are lowercase as required by Sarvam API
 const SARVAM_VOICE_MAP = {
-  hi: { female: "ritu", male: "rahul" },
-  mr: { female: "roopa", male: "anand" },
-  ta: { female: "kavya", male: "kavya" },
-  pa: { female: "simran", male: "simran" },
-  te: { female: "vijay", male: "vijay" },
-  bn: { female: "shreya", male: "shreya" },
-  en: { female: "priya", male: "shubh" },
+  en: { female: "priya",  male: "shubh"  },  // English
+  hi: { female: "ritu",   male: "rahul"  },  // Hindi
+  mr: { female: "roopa",  male: "anand"  },  // Marathi
+  ta: { female: "kavya",  male: "kavya"  },  // Tamil  (no dedicated male — kavya works)
+  te: { female: "kavya",  male: "vijay"  },  // Telugu
+  pa: { female: "simran", male: "simran" },  // Punjabi (no dedicated male)
+  bn: { female: "shreya", male: "shreya" },  // Bengali (no dedicated male)
+  gu: { female: "priya",  male: "shubh"  },  // Gujarati — fall back to EN voices
+  kn: { female: "priya",  male: "shubh"  },  // Kannada  — fall back to EN voices
+  ml: { female: "priya",  male: "shubh"  },  // Malayalam — fall back to EN voices
 };
 
 // Split reply into natural sentence chunks for streaming delivery
@@ -959,15 +964,38 @@ async function synthesizeAndStreamReply(ws, session, fullText) {
   return firstSent;
 }
 
+// Known Sarvam voice IDs (all lowercase)
+const SARVAM_KNOWN_VOICES = new Set(["priya","shubh","ritu","rahul","roopa","anand","kavya","simran","shreya","vijay"]);
+
+// Infer gender from a Sarvam voice name selected in the dashboard
+function inferGenderFromVoiceName(name = "") {
+  const male = ["shubh", "rahul", "anand", "vijay"];
+  return male.includes(name.toLowerCase()) ? "male" : "female";
+}
+
 async function synthesizeSpeech(session, text) {
-  const gender = session.campaign?.voice_gender || session.lead.voice_gender || "female";
+  // gender: from campaign (set by dashboard voice selection) → lead → default female
+  const gender = session.campaign?.voice_gender || session.lead?.voice_gender || "female";
+
+  // Language-detected voice ID pattern from language-manager (e.g. "hi_female_01")
   const resolvedVoiceId = session.campaign?.voice_id || languageManager.resolveVoice(session.callSid, gender);
+
   const language = languageManager.getLanguage(session.callSid);
-  const lang = languageManager.getBaseLanguage(session.callSid);
-  // Map language-manager voice IDs (e.g. hi_female_01) to correct Sarvam speaker per language
-  const voiceId = /^([a-z]{2})_(male|female)_\d{2}$/i.test(resolvedVoiceId)
-    ? (SARVAM_VOICE_MAP[lang]?.[gender] || SARVAM_VOICE_MAP["en"][gender] || "priya")
-    : resolvedVoiceId;
+  const lang = languageManager.getBaseLanguage(session.callSid) || "en";
+
+  let voiceId;
+  if (SARVAM_KNOWN_VOICES.has(resolvedVoiceId?.toLowerCase())) {
+    // Dashboard passed an explicit Sarvam voice name — but auto-switch by language
+    // Keep the gender preference; pick the matching voice for the CURRENT detected language
+    voiceId = SARVAM_VOICE_MAP[lang]?.[gender] || SARVAM_VOICE_MAP["en"][gender] || "priya";
+  } else if (/^([a-z]{2})_(male|female)_\d{2}$/i.test(resolvedVoiceId)) {
+    // Language-manager placeholder (e.g. hi_female_01) → resolve to real Sarvam voice
+    voiceId = SARVAM_VOICE_MAP[lang]?.[gender] || SARVAM_VOICE_MAP["en"][gender] || "priya";
+  } else {
+    // Explicit custom voice ID passed (e.g. from Agni config) — use as-is
+    voiceId = resolvedVoiceId || "priya";
+  }
+  voiceId = voiceId.toLowerCase();
   const emotion = emotionFromContext(text, { stage: session.stage });
   try {
     const response = await timed("tts", () =>
@@ -1539,7 +1567,12 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
       return;
     }
 
+    const prevLang = languageManager.getBaseLanguage(callSid);
     languageManager.recordUtterance(callSid, transcription.language, transcription.text);
+    const newLang = languageManager.getBaseLanguage(callSid);
+    if (prevLang !== newLang) {
+      console.log(`[lang-detect] language switched ${prevLang} → ${newLang} callSid=${callSid}`);
+    }
     session.stage = "qualification";
     // Upgrade status so dashboard shows call is active (not stuck at stream_started)
     if (session.status === "stream_started") session.status = "active";
@@ -1711,6 +1744,7 @@ app.get("/sessions/:callSid", (req, res) => {
     return res.status(404).json({ call_sid: req.params.callSid, status: "completed", state: "not_found" });
   }
   const turnCount = Math.floor((session.history?.length || 0) / 2);
+  const detectedLang = languageManager.getBaseLanguage(session.callSid);
   res.json({
     call_sid: session.callSid,
     status: session.status || "active",
@@ -1719,9 +1753,11 @@ app.get("/sessions/:callSid", (req, res) => {
     phone: session.lead?.phone,
     lead_name: session.lead?.name,
     language: languageManager.getLanguage(session.callSid),
+    detected_language: detectedLang,
     started_at: session.startedAt,
     turn_count: turnCount,
     kb_loaded: !!(session.dynamicVariables?.knowledge_base),
+    voice_gender: session.campaign?.voice_gender || "female",
     last_agent_reply: session.history?.filter(h => h.role === "assistant").slice(-1)[0]?.content?.slice(0, 100) || null,
   });
 });
