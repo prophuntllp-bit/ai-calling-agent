@@ -589,7 +589,7 @@ async function transcribeAudioDirect(audioBuffer, language = "auto") {
   const wav = ensureWavBuffer(audioBuffer);
   const form = new FormData();
   form.append("file", wav, { filename: "audio.wav", contentType: "audio/wav" });
-  form.append("model", "saarika:v2");
+  form.append("model", "saarika:v2.5");
 
   const langCode = SARVAM_LANG_MAP[language] || (language === "auto" ? undefined : language);
   if (langCode) form.append("language_code", langCode);
@@ -822,7 +822,7 @@ async function getLLMResponse(session, userText) {
         axios.post(
           "https://api.groq.com/openai/v1/chat/completions",
           {
-            model: process.env.GROQ_MODEL || "llama3-8b-8192",
+            model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
             messages,
             temperature: 0.2,
             max_tokens: 120,  // enough for 2 Hindi sentences without truncation
@@ -841,7 +841,9 @@ async function getLLMResponse(session, userText) {
       if (match) { try { session.outcome = JSON.parse(match[1]); } catch {} }
       return reply.replace(/OUTCOME:({.*})/s, "").trim();
     } catch (err) {
-      console.warn("[groq] failed, falling back to Ollama:", err.message);
+      const statusCode = err.response?.status;
+      const errBody = JSON.stringify(err.response?.data || {}).slice(0, 200);
+      console.warn(`[groq] failed (HTTP ${statusCode || "?"}) falling back to Ollama: ${err.message} — ${errBody}`);
     }
   }
 
@@ -885,6 +887,9 @@ async function getOpeningMessage(session) {
 
   if (explicitOpening && explicitOpening.trim()) {
     const opening = explicitOpening.trim();
+    // Groq requires first non-system message to be role:"user"
+    // Without this, history starts with [system, assistant] → HTTP 400
+    session.history.push({ role: "user", content: "[CALL_STARTED]" });
     session.history.push({ role: "assistant", content: opening });
     session.history = session.history.slice(-12);
     return opening;
