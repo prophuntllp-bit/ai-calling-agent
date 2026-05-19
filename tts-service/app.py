@@ -388,6 +388,31 @@ async def list_voices(language: str | None = None):
     return {"voices": local_voices}
 
 
+@app.get("/test-elevenlabs")
+async def test_elevenlabs():
+    """Quick diagnostic: try a 5-word synthesis and return the result."""
+    if not ELEVENLABS_API_KEY:
+        return {"error": "ELEVENLABS_API_KEY not set"}
+    voice = ELEVENLABS_VOICE_MAP["female"]
+    url = f"{ELEVENLABS_API_URL}/v1/text-to-speech/{voice}?output_format={ELEVENLABS_OUTPUT_FORMAT}"
+    payload = {
+        "text": "Hello, this is a test.",
+        "model_id": ELEVENLABS_MODEL,
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+    }
+    headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+    return {
+        "status": resp.status_code,
+        "voice_id": voice,
+        "model": ELEVENLABS_MODEL,
+        "output_format": ELEVENLABS_OUTPUT_FORMAT,
+        "bytes_received": len(resp.content),
+        "error": resp.text[:500] if resp.status_code != 200 else None,
+    }
+
+
 @app.get("/health")
 async def health():
     if TTS_PROVIDER == "elevenlabs":
