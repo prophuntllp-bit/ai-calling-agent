@@ -376,9 +376,10 @@ function buildSystemPrompt(lead, knowledgeContext, language) {
     ? `IMPORTANT: The lead is speaking ${langLabel}. Always reply in ${langLabel} (Hinglish is fine for Hindi). Never switch to English.`
     : "Mirror the lead's language — if they speak Hindi, reply in Hindi; if English, reply in English.";
 
-  return `You are Priya, a real estate sales consultant calling on behalf of ${lead.developer || "Prophunt"}.
+  return `You are Priya, a friendly real estate consultant calling on behalf of Prop-hunt.
 
-${hasKB ? "PROJECT KNOWLEDGE (use this to answer questions — do NOT say you will check later):\n" + knowledgeContext : "PROJECT: " + (lead.project || "our project")}
+${hasKB ? `PROJECT KNOWLEDGE BASE — Answer ALL questions directly from this. Never say "I will check" or "let me verify":
+${knowledgeContext}` : `PROJECT: ${lead.project || "our project"}`}
 
 LEAD INFO:
 - Name: ${lead.name}
@@ -387,15 +388,18 @@ LEAD INFO:
 
 ${languageInstruction}
 
-RULES (strictly follow):
-1. Keep EVERY reply under 2 sentences. Be concise and direct.
-2. Use the PROJECT KNOWLEDGE above to answer pricing, size, and configuration questions directly.
-3. NEVER say "ek minute mein check karti hoon", "let me check", "I will check", "main check karti hoon" or any stalling phrase. You have the information — use it.
-4. If the lead asks for price, give the actual price from PROJECT KNOWLEDGE. If price is not in knowledge base, say the sales team will share a detailed quote.
-5. Ask one qualification question at a time — BHK preference or site visit interest.
-6. Close toward a site visit: offer specific days ("aaj ya kal?").
-7. If asked if you are AI, say you are calling from the developer's team.
-8. NEVER repeat your introduction (Namaste/name) after the first greeting. If lead says "hello", "ji", or "haan", go straight to asking what they'd like to know — do NOT re-introduce yourself.
+HOW TO HANDLE THE CONVERSATION:
+1. LISTEN FIRST — always answer the lead's question BEFORE asking your own question.
+2. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual answer — never deflect or stall.
+3. If the lead asks something NOT covered in the knowledge base, say: "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge." Then offer a callback.
+4. After answering, ask ONE natural follow-up question (BHK preference, budget, or site visit).
+5. Keep replies SHORT — max 2-3 sentences. No long speeches.
+6. Move toward a site visit naturally — only after the lead shows genuine interest.
+7. NEVER repeat your introduction after the first greeting.
+8. If asked if you are AI, say you are calling from the developer's sales team.
+9. NEVER say "Prop-hunt" as one word — always say it as "Prop" space "hunt" (two syllables, like "Prop Hunt").
+
+CONVERSATION STYLE: Warm, helpful, and natural. You are answering the lead's questions — NOT running a fixed script. Always respond to what they actually said.
 
 Return this JSON silently when closing:
 OUTCOME:{"status":"interested","site_visit":false,"callback_date":null,"qualification":{"bhk":"","budget_range":"","purpose":"","timeline":""},"notes":""}`;
@@ -818,26 +822,18 @@ function isTerminalGuidedState(session) {
 function shouldUseGuidedReply(session, userText = "") {
   const text = String(userText || "").toLowerCase().trim();
   const guidedState = session?.guidedState || null;
-  const hasKB = (session?.dynamicVariables?.knowledge_base?.length || 0) > 50;
 
-  if (hasKB) {
-    // Any active guided state → keep guided running (maintains state machine reliably)
-    // LLM loses track of state; guided is fast and deterministic
-    if (guidedState) return true;
+  // Terminal states — conversation is already wrapping up, guided handles it
+  if (["callback_confirmed", "callback_declined", "closed"].includes(guidedState)) return true;
 
-    // No state yet — check if it's a pattern guided can handle well
-    // Includes both Latin/Romanised Hindi AND Devanagari (Sarvam STT output)
-    const handledByGuided = /price|cost|rate|budget|daam|kimat|kitna|kitne|bhk|vhk|location|where|kahan|jagah|visit|site|callback|schedule|bye|goodbye|alvida|not interested|nahi|na\b|haan|ji\b|hello|hi\b|batao|bataiye|yes|no\b|रेट|दाम|कीमत|कितना|बीएचके|लोकेशन|कहाँ|कहां|जगह|विज़िट|विजिट|साइट|देखना|नहीं|नही|ना\b|हाँ|हां|जी|ठीक|बताओ|बताइए/.test(text);
-    if (handledByGuided) return true;
+  // Awaiting callback yes/no — guided handles this cleanly
+  if (guidedState === "awaiting_callback_confirmation") return true;
 
-    // Truly open-ended KB question (amenities, floor plan, possession, RERA, etc.)
-    // → let LLM answer from KB
-    return false;
-  }
+  // Clear goodbye / not interested — guided ends the call gracefully
+  if (/\b(bye|goodbye|alvida|band karo|nahi chahiye|not interested|baad mein karana|later call|mujhe nahi chahiye)\b/.test(text)) return true;
 
-  // No KB — use guided for matching patterns or when already in a guided state
-  if (guidedState) return true;
-  return /price|cost|rate|budget|how much|pricing|daam|kimat|kitna|kitne|paisa|qeemat|(?:\b|[^a-z0-9])(?:1|one|ek|2|two|do|3|three|teen|4|four|char)\s*(?:b|v|d)?\s*h\s*k\b|bhk|vhk|dhk|dbhk|vbhk|configuration|config|flat size|carpet|sq ?ft|location|where|near|connectivity|area|kahan|jagah|visit|site|schedule|appointment|callback|bye|goodbye|not interested|stop|later|alvida|band karo/.test(text);
+  // Everything else (questions, pricing, BHK, amenities, location, etc.) → LLM with KB
+  return false;
 }
 
 // ── LLM response — Groq fast path (50–150ms TTFT) with Ollama fallback ──────
@@ -857,11 +853,12 @@ async function getLLMResponse(session, userText) {
     // null → fall through to LLM
   }
 
-  // Knowledge context — only fetch for non-guided path, cap at 3000 chars
+  // Knowledge context — always fetch so LLM can answer any project question
+  // Prefer pre-loaded KB in session, fallback to live fetch; cap at 4000 chars for GPT-4o-mini
   const knowledgeContext = (
     session.dynamicVariables?.knowledge_base ||
     (await getKnowledgeContext(session.campaign?.project_id || session.lead.project_id, userText))
-  ).slice(0, 3000);
+  ).slice(0, 4000);
 
   // Resolve language — prefer detected language over "auto" placeholder
   const resolvedLanguage = (language === "auto" || language === "auto-IN" || !language)
@@ -881,8 +878,8 @@ async function getLLMResponse(session, userText) {
           {
             model: process.env.OPENAI_MODEL || "gpt-4o-mini",
             messages,
-            temperature: 0.2,
-            max_tokens: 120,
+            temperature: 0.3,
+            max_tokens: 160,  // enough for a 2-3 sentence answer + follow-up question
             stream: false,
           },
           {
