@@ -314,27 +314,12 @@ function scheduleEnablexStreamStart(session, reason = "scheduled", options = {})
   };
 
   const voiceId = session.callSid;
-  const delays = [
-    0,
-    1000,
-    2000,
-    3000,
-    4000,
-    5000,
-    6000,
-    7000,
-    8000,
-    9000,
-    10000,
-    11000,
-    12000,
-    13000,
-    14000,
-    16000,
-    18000,
-    21000,
-    25000,
-  ];
+  // post-dial: only 3 quick attempts (call may already be connected by the time we dial)
+  // event-connected: single immediate attempt — EnableX is ready at this point
+  const isPostDial = reason === "post-dial";
+  const delays = isPostDial
+    ? [0, 1500, 4000]           // 3 attempts only — event-connected handles the rest
+    : [0, 1000, 3000, 6000, 10000, 15000, 21000, 28000]; // robust retry after connected event
   delays.forEach((delayMs, index) => {
     setTimeout(async () => {
       const current = sessions.get(voiceId);
@@ -731,6 +716,11 @@ function buildRuleBasedReply(session, userText = "") {
         `Theek hai, ${cfg}. Main aaj hi sales team ka callback arrange kar sakti hoon live quote ke saath. Karoon?`
       );
     }
+    // After 2 repeated asks without a clear answer, hand off to LLM to handle naturally
+    session._configAsks = (session._configAsks || 0) + 1;
+    if (session._configAsks >= 2) {
+      return null; // signal to caller: let LLM handle this turn
+    }
     return T(
       `Please tell me, do you want the two BHK price or the three BHK price?`,
       `Batayein, do BHK ka rate chahiye ya teen BHK ka?`
@@ -857,10 +847,14 @@ async function getLLMResponse(session, userText) {
   session.history = session.history.slice(-12);
 
   // Guided reply path — pure in-memory, ~0ms (handles pricing/BHK/location/callback)
+  // Returns null when it wants LLM to take over (e.g. user is confused, not answering config question)
   if (shouldUseGuidedReply(session, userText)) {
     const reply = buildRuleBasedReply(session, userText);
-    session.history.push({ role: "assistant", content: reply });
-    return reply;
+    if (reply !== null) {
+      session.history.push({ role: "assistant", content: reply });
+      return reply;
+    }
+    // null → fall through to LLM
   }
 
   // Knowledge context — only fetch for non-guided path, cap at 3000 chars
@@ -1691,6 +1685,13 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     // Single-character noise filter (not a real word)
     if (wordCount === 1 && transcription.text.trim().length <= 1) {
       console.log(`[enablex-media] skipping single-char noise callSid=${callSid} text="${transcription.text}"`);
+      return;
+    }
+    // Background noise filter — ElevenLabs wraps noise transcripts in parentheses e.g. "(background music)"
+    // Drop these so they don't trigger LLM responses
+    const cleanText = transcription.text.trim();
+    if (/^\(.*\)$/.test(cleanText) || /^\[.*\]$/.test(cleanText)) {
+      console.log(`[enablex-media] skipping noise transcript callSid=${callSid} text="${cleanText}"`);
       return;
     }
 
