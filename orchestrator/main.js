@@ -877,40 +877,7 @@ async function getLLMResponse(session, userText) {
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage);
   const messages = [{ role: "system", content: systemPrompt }, ...session.history];
 
-  // ── Groq fast path (GROQ_API_KEY set) ──────────────────────────────────────
-  if (process.env.GROQ_API_KEY) {
-    try {
-      const t0 = Date.now();
-      const response = await timed("groq", () =>
-        axios.post(
-          "https://api.groq.com/openai/v1/chat/completions",
-          {
-            model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
-            messages,
-            temperature: 0.2,
-            max_tokens: 120,  // enough for 2 Hindi sentences without truncation
-            stream: false,
-          },
-          {
-            headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
-            timeout: 4000,
-          }
-        )
-      );
-      const reply = response.data.choices?.[0]?.message?.content || languageManager.fallback(session.callSid);
-      console.log(`[groq] callSid=${session.callSid} latency=${Date.now()-t0}ms reply="${reply.slice(0,60)}"`);
-      session.history.push({ role: "assistant", content: reply });
-      const match = reply.match(/OUTCOME:({.*})/s);
-      if (match) { try { session.outcome = JSON.parse(match[1]); } catch {} }
-      return reply.replace(/OUTCOME:({.*})/s, "").trim();
-    } catch (err) {
-      const statusCode = err.response?.status;
-      const errBody = JSON.stringify(err.response?.data || {}).slice(0, 200);
-      console.warn(`[groq] failed (HTTP ${statusCode || "?"}) falling back to OpenAI: ${err.message} — ${errBody}`);
-    }
-  }
-
-  // ── OpenAI ChatGPT fallback (replaces local Ollama — runs fully on Railway) ──
+  // ── OpenAI primary (OPENAI_API_KEY set) ────────────────────────────────────
   if (process.env.OPENAI_API_KEY) {
     try {
       const t0 = Date.now();
@@ -939,7 +906,40 @@ async function getLLMResponse(session, userText) {
     } catch (err) {
       const statusCode = err.response?.status;
       const errBody = JSON.stringify(err.response?.data || {}).slice(0, 200);
-      console.warn(`[openai] failed (HTTP ${statusCode || "?"}) falling back to rule-based: ${err.message} — ${errBody}`);
+      console.warn(`[openai] failed (HTTP ${statusCode || "?"}) falling back to Groq: ${err.message} — ${errBody}`);
+    }
+  }
+
+  // ── Groq fallback (free tier, fast) ────────────────────────────────────────
+  if (process.env.GROQ_API_KEY) {
+    try {
+      const t0 = Date.now();
+      const response = await timed("groq", () =>
+        axios.post(
+          "https://api.groq.com/openai/v1/chat/completions",
+          {
+            model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+            messages,
+            temperature: 0.2,
+            max_tokens: 120,
+            stream: false,
+          },
+          {
+            headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+            timeout: 4000,
+          }
+        )
+      );
+      const reply = response.data.choices?.[0]?.message?.content || languageManager.fallback(session.callSid);
+      console.log(`[groq] callSid=${session.callSid} latency=${Date.now()-t0}ms reply="${reply.slice(0,60)}"`);
+      session.history.push({ role: "assistant", content: reply });
+      const match = reply.match(/OUTCOME:({.*})/s);
+      if (match) { try { session.outcome = JSON.parse(match[1]); } catch {} }
+      return reply.replace(/OUTCOME:({.*})/s, "").trim();
+    } catch (err) {
+      const statusCode = err.response?.status;
+      const errBody = JSON.stringify(err.response?.data || {}).slice(0, 200);
+      console.warn(`[groq] failed (HTTP ${statusCode || "?"}) falling back to rule-based: ${err.message} — ${errBody}`);
     }
   }
 
