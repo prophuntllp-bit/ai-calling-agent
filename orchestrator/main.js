@@ -391,7 +391,7 @@ ${languageInstruction}
 HOW TO HANDLE THE CONVERSATION:
 1. LISTEN FIRST — always answer the lead's question BEFORE asking your own question.
 2. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual answer — never deflect or stall.
-3. If the lead asks something NOT covered in the knowledge base, say: "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge." Then offer a callback.
+3. If the lead asks a SPECIFIC question that is genuinely not covered anywhere in the knowledge base (e.g. a very specific legal or construction detail), say: "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge." Do NOT use this line for simple affirmations like "haan", "yes", "ji", "okay", "theek hai" — those are just confirmations, respond with a follow-up question instead.
 4. After answering, ask ONE short natural follow-up question (BHK preference, budget, or site visit).
 5. STRICT LENGTH RULE: 1-2 sentences maximum. Absolute cap of 25 words. Do NOT add extra sentences or elaboration. No long speeches.
 6. ANTI-REPETITION RULE: NEVER start a reply with "Dhanyawaad", "Shukriya", "Aapka dhanyawaad" or any thank-you phrase unless the lead is explicitly ending the call with a goodbye. If the lead says "theek hai", "ok", "accha" — continue the conversation with a question, do not thank them.
@@ -854,6 +854,18 @@ async function getLLMResponse(session, userText) {
     // null → fall through to LLM
   }
 
+  // Early-call affirmation shortcut — if the lead says "haan / ji / yes / okay"
+  // as their very first response after the opening, they are confirming they can
+  // talk — NOT asking a question. Skip LLM and ask a natural qualifying question.
+  const userTurns = session.history.filter(h => h.role === "user").length;
+  const isSimpleAffirmation = /^(haan|ha|yes|ji|okay|ok|theek|acha|accha|bilkul|zaroor|sure|haan ji|ha ji|theek hai|theek h|sahi|chal|chalo|bolo|batao|bol)[\.\!\s,]*$/i.test(userText.trim());
+  if (userTurns <= 2 && isSimpleAffirmation) {
+    const project = session.lead?.project || session.campaign?.name || "is project";
+    const reply = `${project} ke baare mein kya jaanna chahenge aap — price, location, ya BHK options?`;
+    session.history.push({ role: "assistant", content: reply });
+    return reply;
+  }
+
   // Knowledge context — always fetch so LLM can answer any project question
   // Prefer pre-loaded KB in session, fallback to live fetch; cap at 4000 chars for GPT-4o-mini
   const knowledgeContext = (
@@ -957,7 +969,7 @@ async function getOpeningMessage(session) {
   // Use explicit opening if set, but cap it to the first 2 sentences so it
   // never runs longer than ~5 seconds. Long openings get cut off by impatient
   // callers — a brief greeting is more effective.
-  const rawOpening = explicitOpening.trim();
+  const rawOpening = normalizeTtsText(explicitOpening.trim());
   const opening = rawOpening
     ? rawOpening.split(/(?<=[.!?।])\s+/).slice(0, 2).join(" ").trim()
     : (() => {
@@ -1056,7 +1068,17 @@ function inferGenderFromVoiceName(name = "") {
   return male.includes(name.toLowerCase()) ? "male" : "female";
 }
 
+// Normalise text before TTS: fix known mispronunciations and brand names
+function normalizeTtsText(text) {
+  return (text || "")
+    .replace(/\bProphunt\b/gi,  "Prop Hunt")
+    .replace(/\bProphunts?\b/gi, "Prop Hunt")
+    .replace(/\bprop-hunt\b/gi,  "Prop Hunt")
+    .replace(/\bArthaleads?\b/gi, "Artha Leads");
+}
+
 async function synthesizeSpeech(session, text) {
+  const normalizedText = normalizeTtsText(text);
   // gender: from campaign (set by dashboard voice selection) → lead → default female
   const gender = session.campaign?.voice_gender || session.lead?.voice_gender || "female";
 
@@ -1085,7 +1107,7 @@ async function synthesizeSpeech(session, text) {
       axios.post(
         `${config.services.tts}/synthesize`,
         {
-          text,
+          text: normalizedText,
           voice_id: voiceId,
           language,
           gender,
