@@ -954,17 +954,25 @@ async function getOpeningMessage(session) {
     process.env.DEFAULT_OPENING_TEXT ||
     "";
 
-  if (explicitOpening && explicitOpening.trim()) {
-    const opening = explicitOpening.trim();
-    // Groq requires first non-system message to be role:"user"
-    // Without this, history starts with [system, assistant] → HTTP 400
-    session.history.push({ role: "user", content: "[CALL_STARTED]" });
-    session.history.push({ role: "assistant", content: opening });
-    session.history = session.history.slice(-12);
-    return opening;
-  }
+  // Use explicit opening if set, but cap it to the first 2 sentences so it
+  // never runs longer than ~5 seconds. Long openings get cut off by impatient
+  // callers — a brief greeting is more effective.
+  const rawOpening = explicitOpening.trim();
+  const opening = rawOpening
+    ? rawOpening.split(/(?<=[.!?।])\s+/).slice(0, 2).join(" ").trim()
+    : (() => {
+        // Short hardcoded template — no LLM call needed for opening,
+        // saves 1-2 seconds and guarantees a consistently short greeting.
+        const name    = session.lead?.name    || "ji";
+        const project = session.lead?.project || "hamare project";
+        return `Namaste ${name} ji! Main Priya bol rahi hoon Prop Hunt se. Aap ${project} ke baare mein interested hain — kya abhi baat kar sakte hain?`;
+      })();
 
-  return getLLMResponse(session, "[CALL_STARTED]");
+  // Seed history so subsequent LLM turns have context of how the call started
+  session.history.push({ role: "user",      content: "[CALL_STARTED]" });
+  session.history.push({ role: "assistant", content: opening });
+  session.history = session.history.slice(-12);
+  return opening;
 }
 
 function emotionFromContext(text = "", state = {}) {
@@ -1703,8 +1711,8 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     // (TV, call-waiting music, ambient noise), not the lead speaking to us.
     if (!session.firstValidUtterance) {
       const wordCount2 = cleanText.split(/\s+/).filter(w => w.length > 0).length;
-      const looksConversational = /\b(hello|haan|ha\b|hi\b|ji\b|namaste|theek|kaun|kya|bolo|nahi|nahin|bol|sun|suno|aap|tum|main|acha|accha|ok|haan ji|ha ji|kal|aaj)\b/i.test(cleanText)
-        || cleanText.includes("?") || wordCount2 <= 5;
+      const looksConversational = /\b(hello|haan|ha\b|hi\b|ji\b|namaste|theek|kaun|kya|bolo|nahi|nahin|bol|sun|suno|aap|tum|main|acha|accha|ok|haan ji|ha ji|kal|aaj|tell|what|how|where|when|price|cost|yes|no|sure|wait|who|why|want|know|about)\b/i.test(cleanText)
+        || cleanText.includes("?") || wordCount2 <= 6;
       if (!looksConversational) {
         console.log(`[enablex-media] skipping first-utterance background noise callSid=${callSid} text="${cleanText.slice(0, 60)}"`);
         return;
