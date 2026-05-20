@@ -93,6 +93,26 @@ fs.mkdirSync(config.recordingsDir, { recursive: true });
 
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
+// Recordings endpoint — Redis-first so files survive container restarts / redeploys.
+// Falls back to local disk for files written this session that haven't been cached yet.
+app.get("/recordings/:callSid/mixed.wav", async (req, res) => {
+  const { callSid } = req.params;
+  try {
+    const b64 = await redis.get(`recording:${callSid}`);
+    if (b64) {
+      const buf = Buffer.from(b64, "base64");
+      res.set("Content-Type", "audio/wav");
+      res.set("Content-Length", buf.length);
+      res.set("Cache-Control", "public, max-age=86400");
+      return res.send(buf);
+    }
+  } catch { /* fall through to disk */ }
+  // Disk fallback (works within the same container session)
+  const diskPath = path.join(config.recordingsDir, safeRecordingId(callSid), "mixed.wav");
+  if (fs.existsSync(diskPath)) return res.sendFile(diskPath);
+  return res.status(404).json({ error: "Recording not found" });
+});
+// Serve other recording files (caller.wav, agent.wav, timeline.json) from disk
 app.use("/recordings", express.static(config.recordingsDir));
 
 function getPublicBaseUrl(req) {
@@ -969,15 +989,22 @@ async function getOpeningMessage(session) {
   // Use explicit opening if set, but cap it to the first 2 sentences so it
   // never runs longer than ~5 seconds. Long openings get cut off by impatient
   // callers — a brief greeting is more effective.
-  const rawOpening = normalizeTtsText(explicitOpening.trim());
+  // Interpolate template placeholders before normalizing
+  const leadName = session.lead?.name || "ji";
+  const projectName = session.lead?.project || session.campaign?.name || "hamare project";
+  const interpolated = explicitOpening.trim()
+    .replace(/\{lead[\s_]?name\}/gi, leadName)
+    .replace(/\{name\}/gi, leadName)
+    .replace(/\{lead\}/gi, leadName)
+    .replace(/\{project[\s_]?name\}/gi, projectName)
+    .replace(/\{project\}/gi, projectName);
+
+  const rawOpening = normalizeTtsText(interpolated);
   const opening = rawOpening
     ? rawOpening.split(/(?<=[.!?।])\s+/).slice(0, 2).join(" ").trim()
     : (() => {
-        // Short hardcoded template — no LLM call needed for opening,
-        // saves 1-2 seconds and guarantees a consistently short greeting.
-        const name    = session.lead?.name    || "ji";
-        const project = session.lead?.project || "hamare project";
-        return `Namaste ${name} ji! Main Priya bol rahi hoon Prop Hunt se. Aap ${project} ke baare mein interested hain — kya abhi baat kar sakte hain?`;
+        // Short hardcoded fallback — only used if opening line field is completely empty
+        return `Namaste ${leadName} ji! Main Priya bol rahi hoon Prop Hunt se. Aap ${projectName} ke baare mein interested hain — kya abhi baat kar sakte hain?`;
       })();
 
   // Seed history so subsequent LLM turns have context of how the call started
@@ -1251,6 +1278,29 @@ async function finalizeRecording(session) {
   if (mixedPcm.length) writeWavFile(files.mixed, mixedPcm);
   await fs.promises.writeFile(recording.timelinePath, JSON.stringify(recording.timeline, null, 2));
   recording.finalized = true;
+
+  // Persist mixed WAV in Redis so it survives container restarts / redeploys.
+  // Railway's filesystem is ephemeral — local file URLs break after every deploy.
+  // Redis TTL: 30 days (same as call log retention).
+  if (mixedPcm.length) {
+    try {
+      const wavBuffer = fs.readFileSync(files.mixed);
+      const b64 = wavBuffer.toString("base64");
+      // Only cache recordings under 10 MB to avoid Redis OOM
+      if (b64.length < 10 * 1024 * 1024) {
+        await redis.set(
+          `recording:${session.callSid}`,
+          b64,
+          "EX",
+          30 * 24 * 60 * 60  // 30 days
+        );
+        console.log(`[recording] cached to Redis callSid=${session.callSid} size=${Math.round(b64.length / 1024)}KB`);
+      }
+    } catch (err) {
+      console.warn("[recording] Redis cache failed:", err.message);
+    }
+  }
+
   session.recordingPath = mixedPcm.length ? recordingUrl(session.callSid, "mixed.wav") : null;
   session.recordings = {
     caller_path: callerPcm.length ? files.caller : null,
