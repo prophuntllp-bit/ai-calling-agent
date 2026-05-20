@@ -392,12 +392,13 @@ HOW TO HANDLE THE CONVERSATION:
 1. LISTEN FIRST — always answer the lead's question BEFORE asking your own question.
 2. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual answer — never deflect or stall.
 3. If the lead asks something NOT covered in the knowledge base, say: "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge." Then offer a callback.
-4. After answering, ask ONE natural follow-up question (BHK preference, budget, or site visit).
-5. Keep replies SHORT — max 2-3 sentences. No long speeches.
-6. Move toward a site visit naturally — only after the lead shows genuine interest.
-7. NEVER repeat your introduction after the first greeting.
-8. If asked if you are AI, say you are calling from the developer's sales team.
-9. NEVER say "Prop-hunt" as one word — always say it as "Prop" space "hunt" (two syllables, like "Prop Hunt").
+4. After answering, ask ONE short natural follow-up question (BHK preference, budget, or site visit).
+5. STRICT LENGTH RULE: 1-2 sentences maximum. Absolute cap of 25 words. Do NOT add extra sentences or elaboration. No long speeches.
+6. ANTI-REPETITION RULE: NEVER start a reply with "Dhanyawaad", "Shukriya", "Aapka dhanyawaad" or any thank-you phrase unless the lead is explicitly ending the call with a goodbye. If the lead says "theek hai", "ok", "accha" — continue the conversation with a question, do not thank them.
+7. Move toward a site visit naturally — only after the lead shows genuine interest.
+8. NEVER repeat your introduction after the first greeting.
+9. If asked if you are AI, say you are calling from the developer's sales team.
+10. NEVER say "Prop-hunt" as one word — always say it as "Prop" space "hunt" (two syllables, like "Prop Hunt").
 
 CONVERSATION STYLE: Warm, helpful, and natural. You are answering the lead's questions — NOT running a fixed script. Always respond to what they actually said.
 
@@ -879,7 +880,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.OPENAI_MODEL || "gpt-4o-mini",
             messages,
             temperature: 0.3,
-            max_tokens: 160,  // enough for a 2-3 sentence answer + follow-up question
+            max_tokens: 90,  // 1-2 short sentences only
             stream: false,
           },
           {
@@ -1527,6 +1528,11 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
   session.telephony.agentSpeakingUntil = Date.now() + playbackMs + 700;
+  // Opening greeting is uninterruptible — protect it from barge-in so the lead
+  // hears the full greeting even if background noise triggers speech detection
+  if (label && label.startsWith("opening-greeting")) {
+    session.telephony.openingProtectionUntil = Date.now() + playbackMs + 800;
+  }
   if (session.inboundAudio && !session.inboundAudio.processing) {
     session.inboundAudio.chunks = [];
     session.inboundAudio.speechFrames = 0;
@@ -1692,6 +1698,20 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
       return;
     }
 
+    // First-utterance TV/radio filter — before the lead has said anything meaningful,
+    // long sentences with no greeting or question are almost certainly background audio
+    // (TV, call-waiting music, ambient noise), not the lead speaking to us.
+    if (!session.firstValidUtterance) {
+      const wordCount2 = cleanText.split(/\s+/).filter(w => w.length > 0).length;
+      const looksConversational = /\b(hello|haan|ha\b|hi\b|ji\b|namaste|theek|kaun|kya|bolo|nahi|nahin|bol|sun|suno|aap|tum|main|acha|accha|ok|haan ji|ha ji|kal|aaj)\b/i.test(cleanText)
+        || cleanText.includes("?") || wordCount2 <= 5;
+      if (!looksConversational) {
+        console.log(`[enablex-media] skipping first-utterance background noise callSid=${callSid} text="${cleanText.slice(0, 60)}"`);
+        return;
+      }
+    }
+    session.firstValidUtterance = true;
+
     const prevLang = languageManager.getBaseLanguage(callSid);
     languageManager.recordUtterance(callSid, transcription.language, transcription.text);
     const newLang = languageManager.getBaseLanguage(callSid);
@@ -1784,6 +1804,12 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
 
   const inbound = session.inboundAudio;
   const hasSpeech = detectSpeech(audioBuffer); // sync — no HTTP, ~0.05ms
+
+  // Opening protection — the greeting plays fully before we listen for anything.
+  // This prevents background noise or an early "hello" from cutting off the opening.
+  if (session.telephony?.openingProtectionUntil && Date.now() < session.telephony.openingProtectionUntil) {
+    return; // Drop all inbound audio while opening plays
+  }
 
   // Barge-in: caller speaks while agent is playing → cancel agent audio immediately
   if (hasSpeech && session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
