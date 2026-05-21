@@ -869,7 +869,12 @@ function shouldUseGuidedReply(session, userText = "") {
   // Clear goodbye / not interested — guided ends the call gracefully
   if (/\b(bye|goodbye|alvida|band karo|nahi chahiye|not interested|baad mein karana|later call|mujhe nahi chahiye|thank you|thanks|ok bye|ok thanks|theek hai ab|chalta hoon|chalti hoon|achha chalta|chalte hain)\b|थैंक\s*यू|धन्यवाद|शुक्रिया|अलविदा|चलते\s*हैं|चलता\s*हूँ|बाय/.test(text)) return true;
 
-  // Everything else (questions, pricing, BHK, amenities, location, etc.) → LLM with KB
+  // BHK / configuration questions — route to guided reply so LLM can't inject
+  // unrelated KB content (e.g. jumping to "Construction Linked Plan" when asked about 2BHK)
+  const hasBhkQuery = /(?:2|two|to\b|too\b|do\b|3|three|teen|4|four|char|1|one|ek)\s*(?:b\s*h\s*k|bhk|vhk|dhk)\b|(?:bhk|vhk|dhk)\b|configuration\b|flat\s+(?:size|type)|बीएचके|बी\.?एच\.?के/.test(text);
+  if (hasBhkQuery) return true;
+
+  // Everything else (amenities, location details, open-ended Qs, etc.) → LLM with KB
   return false;
 }
 
@@ -1658,7 +1663,8 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
   const playbackMs = chunks.length * 20;
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
-  session.telephony.agentSpeakingUntil = Date.now() + playbackMs + 600; // +600ms for network jitter — enough to cover phone delay without eating user's first words
+  session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 600;  // +600ms — barge-in window: agent still "speaking" for detection purposes
+  session.telephony.echoSuppressionUntil  = Date.now() + playbackMs + 1100; // +1100ms — extra 500ms dead zone after agent window to swallow phone echo
   // Opening greeting is uninterruptible — protect it from barge-in so the lead
   // hears the full greeting even if background noise triggers speech detection
   if (label && label.startsWith("opening-greeting")) {
@@ -1949,13 +1955,16 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
   if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
     if (hasSpeech) {
       inbound.bargeinFrames = (inbound.bargeinFrames || 0) + 1;
-      if (inbound.bargeinFrames >= 3) {
+      if (inbound.bargeinFrames >= 5) {
+        // 5 consecutive frames = 100ms of sustained speech — real human voice.
+        // Echo/room noise is brief and inconsistent; genuine barge-in is sustained.
         clearEnablexMedia(ws, session);
-        session.telephony.agentSpeakingUntil = 0;
+        session.telephony.agentSpeakingUntil   = 0;
+        session.telephony.echoSuppressionUntil = 0; // user is actually speaking — lift echo suppression too
         inbound.bargeinFrames = 0;
         inbound.speculativePromise = null;
         inbound.speculativeAudio   = null;
-        console.log(`[enablex-media] barge-in confirmed (3 frames) callSid=${callSid}`);
+        console.log(`[enablex-media] barge-in confirmed (5 frames) callSid=${callSid}`);
       }
     } else {
       inbound.bargeinFrames = 0; // reset on silence — must be sustained speech
@@ -1965,6 +1974,15 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
   }
 
   if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
+    return;
+  }
+
+  // ── Echo suppression dead zone ──────────────────────────────────────────────
+  // The agent's voice echoes back through the phone speaker ~100-400ms after the
+  // agentSpeakingUntil window closes. Without this guard, the echo gets captured as
+  // user speech, STT'd as the agent's own question, and creates a reply loop.
+  // During this window we drop all frames — real user speech starts slightly later.
+  if (session.telephony?.echoSuppressionUntil && Date.now() < session.telephony.echoSuppressionUntil) {
     return;
   }
 
