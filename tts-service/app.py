@@ -50,19 +50,19 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_API_URL = os.getenv("ELEVENLABS_API_URL", "https://api.elevenlabs.io").rstrip("/")
 # eleven_flash_v2_5: fast + low latency, good Hindi multilingual support
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
-# Monika Sogam — Hindi Modulated Voice (1qEiC6qsybMkmnNdVMbK)
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "1qEiC6qsybMkmnNdVMbK")
+# zmh5xhBvMzqR4ZlXgcgL — voice selected from ElevenLabs voice library
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "zmh5xhBvMzqR4ZlXgcgL")
 # pcm_8000 = raw 8kHz 16-bit little-endian PCM — zero resampling needed for EnableX phone calls
 ELEVENLABS_OUTPUT_FORMAT = os.getenv("ELEVENLABS_OUTPUT_FORMAT", "pcm_8000")
-# Emotion-tuned settings for flash_v2_5 — warm and natural, not robotic:
-#   stability 0.35  = low stability = high tonal variation = expressive, human-like delivery
-#   similarity 0.75 = gives the voice room to flex emotionally vs original recording
-#   style 0.45      = strong style boost — warmth, enthusiasm, natural conversational cadence
-#   speed 0.85      = slightly slower — more deliberate, warmer feel on 8kHz phone line
-ELEVENLABS_STABILITY = float(os.getenv("ELEVENLABS_STABILITY", "0.35"))
-ELEVENLABS_SIMILARITY_BOOST = float(os.getenv("ELEVENLABS_SIMILARITY_BOOST", "0.75"))
-ELEVENLABS_STYLE = float(os.getenv("ELEVENLABS_STYLE", "0.45"))
-ELEVENLABS_SPEED = float(os.getenv("ELEVENLABS_SPEED", "0.85"))
+# Settings matched to ElevenLabs UI screenshot:
+#   stability 0.5  = middle slider (balanced variation vs stability)
+#   similarity 1.0 = slider all the way right (maximum similarity to original voice)
+#   style 0.0      = no style slider shown for this voice
+#   speed 1.0      = middle slider (normal pace)
+ELEVENLABS_STABILITY = float(os.getenv("ELEVENLABS_STABILITY", "0.5"))
+ELEVENLABS_SIMILARITY_BOOST = float(os.getenv("ELEVENLABS_SIMILARITY_BOOST", "1.0"))
+ELEVENLABS_STYLE = float(os.getenv("ELEVENLABS_STYLE", "0.0"))
+ELEVENLABS_SPEED = float(os.getenv("ELEVENLABS_SPEED", "1.0"))
 
 # Voice map: gender → voice_id (override with env vars)
 ELEVENLABS_VOICE_MAP = {
