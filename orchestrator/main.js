@@ -392,9 +392,13 @@ function buildSystemPrompt(lead, knowledgeContext, language) {
   const lang = normalizeLanguageToISO(language || lead.language_preference || lead.language || "auto");
   const langNames = { hi: "Hindi", mr: "Marathi", ta: "Tamil", te: "Telugu", pa: "Punjabi", bn: "Bengali", gu: "Gujarati", kn: "Kannada", ml: "Malayalam", en: "English" };
   const langLabel = langNames[lang];
+  // Hindi-specific instruction enforces pure Hindi (no Hinglish) for clean TTS pronunciation
+  const hindiExtra = lang === "hi"
+    ? ` Use pure conversational Hindi words — avoid English words wherever a natural Hindi word exists (e.g. "kimat" not "price", "jagah" not "location", "kamre" not "rooms", "suvidha" not "facility", "samay" not "time"). Write numbers and units in full words that TTS can pronounce (e.g. "pachaas lakh rupaye" or "50 lakh rupaye", "sau square feet"). Do NOT write abbreviations like Rs, sq.ft, BHK — spell them out.`
+    : "";
   const languageInstruction = langLabel && lang !== "en" && lang !== "auto"
-    ? `IMPORTANT: The lead is speaking ${langLabel}. Always reply in ${langLabel} (Hinglish is fine for Hindi). Never switch to English.`
-    : "Mirror the lead's language — if they speak Hindi, reply in Hindi; if English, reply in English.";
+    ? `IMPORTANT: The lead is speaking ${langLabel}. Always reply in pure ${langLabel} — no English words mixed in.${hindiExtra} Never switch to English.`
+    : "Mirror the lead's language — if they speak Hindi, reply in pure Hindi; if English, reply in English.";
 
   return `You are Priya, a friendly real estate consultant calling on behalf of Prop-hunt.
 
@@ -1103,13 +1107,41 @@ function inferGenderFromVoiceName(name = "") {
   return male.includes(name.toLowerCase()) ? "male" : "female";
 }
 
-// Normalise text before TTS: fix known mispronunciations and brand names
+// Normalise text before TTS: expand abbreviations and fix known mispronunciations
 function normalizeTtsText(text) {
   return (text || "")
-    .replace(/\bProphunt\b/gi,  "Prop Hunt")
+    // ── Brand names ─────────────────────────────────────────────────────
+    .replace(/\bProphunt\b/gi,   "Prop Hunt")
     .replace(/\bProphunts?\b/gi, "Prop Hunt")
     .replace(/\bprop-hunt\b/gi,  "Prop Hunt")
-    .replace(/\bArthaleads?\b/gi, "Artha Leads");
+    .replace(/\bArthaleads?\b/gi, "Artha Leads")
+
+    // ── Currency: ₹ / Rs. / INR → "rupaye" ─────────────────────────────
+    .replace(/₹\s*/g,     "rupaye ")
+    .replace(/Rs\.\s*/gi, "rupaye ")
+    .replace(/\bRs\b/gi,  "rupaye")
+    .replace(/\bINR\b/g,  "rupaye")
+
+    // ── Area units ──────────────────────────────────────────────────────
+    .replace(/sq\.?\s*ft\.?/gi,              "square feet")
+    .replace(/\bsqft\b/gi,                   "square feet")
+    .replace(/sq\.?\s*f(?:eet|oot)\.?/gi,    "square feet")
+    .replace(/sq\.?\s*m(?:t|tr|eter)?\.?/gi, "square meter")
+    .replace(/\bsqmt\b/gi,                   "square meter")
+
+    // ── Large Indian number suffixes ─────────────────────────────────────
+    // e.g. "1.5Cr" → "1.5 crore",  "80L" / "80 lac" → "80 lakh"
+    .replace(/\b(\d+(?:\.\d+)?)\s*[Cc]r\.?\b/g,           "$1 crore")
+    .replace(/\b(\d+(?:\.\d+)?)\s*[Ll](?:ac|akh)?\.?\b/g, "$1 lakh")
+
+    // ── Percentage ───────────────────────────────────────────────────────
+    .replace(/(\d)\s*%/g, "$1 percent")
+
+    // ── Floor notation: G+12 → "Ground plus 12" ─────────────────────────
+    .replace(/\bG\+(\d+)\b/g, "Ground plus $1")
+
+    // ── BHK: space out letters so TTS reads them individually ────────────
+    .replace(/\b(\d)\s*BHK\b/g, "$1 B H K");
 }
 
 async function synthesizeSpeech(session, text) {
