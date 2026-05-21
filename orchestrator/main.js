@@ -387,20 +387,63 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function buildSystemPrompt(lead, knowledgeContext, language) {
+function buildSystemPrompt(lead, knowledgeContext, language, agentConfig = {}) {
   const hasKB = knowledgeContext && knowledgeContext.trim().length > 30;
   const lang = normalizeLanguageToISO(language || lead.language_preference || lead.language || "auto");
   const langNames = { hi: "Hindi", mr: "Marathi", ta: "Tamil", te: "Telugu", pa: "Punjabi", bn: "Bengali", gu: "Gujarati", kn: "Kannada", ml: "Malayalam", en: "English" };
   const langLabel = langNames[lang];
-  // Hindi-specific instruction enforces pure Hindi (no Hinglish) for clean TTS pronunciation
-  const hindiExtra = lang === "hi"
-    ? ` Use pure conversational Hindi words — avoid English words wherever a natural Hindi word exists (e.g. "kimat" not "price", "jagah" not "location", "kamre" not "rooms", "suvidha" not "facility", "samay" not "time"). Write numbers and units in full words that TTS can pronounce (e.g. "pachaas lakh rupaye" or "50 lakh rupaye", "sau square feet"). Do NOT write abbreviations like Rs, sq.ft, BHK — spell them out.`
-    : "";
+
+  // ── Agent config with defaults ────────────────────────────────────────────
+  const agentName      = agentConfig.agentName      || "Priya";
+  const wordCap        = parseInt(agentConfig.wordCap || "30", 10);
+  const pitchTone      = agentConfig.pitchTone      || "balanced";       // aggressive | balanced | consultative
+  const langStrictness = agentConfig.langStrictness  || "pure-hindi";    // pure-hindi | hinglish | auto
+  const escalationLine = agentConfig.escalationLine  ||
+    "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge.";
+
+  // ── Language instruction ───────────────────────────────────────────────────
+  let hindiExtra = "";
+  if (lang === "hi") {
+    if (langStrictness === "pure-hindi") {
+      hindiExtra = ` Use pure conversational Hindi words — avoid English words wherever a natural Hindi equivalent exists (e.g. "kimat" not "price", "jagah" not "location", "kamre" not "rooms", "suvidha" not "facility", "samay" not "time"). Write numbers and units in full words for TTS (e.g. "pachaas lakh rupaye", "sau square feet"). Do NOT write abbreviations like Rs, sq.ft, BHK — spell them out.`;
+    } else if (langStrictness === "hinglish") {
+      hindiExtra = ` Speak in natural Hinglish — Hindi sentences with English brand names, project names, and technical terms allowed (e.g. "price", "BHK", "EMI", "site visit" are fine). Keep it conversational and easy to understand.`;
+    }
+  }
+
   const languageInstruction = langLabel && lang !== "en" && lang !== "auto"
     ? `CRITICAL LANGUAGE RULE — THIS OVERRIDES EVERYTHING ELSE: The lead is speaking ${langLabel}. You MUST reply in ${langLabel} for EVERY single message — including greetings, goodbyes, closing lines, and follow-up questions. NEVER write even one word in English. If you reply in English for any reason, that is a critical failure.${hindiExtra}`
     : "Mirror the lead's language exactly — if they speak Hindi, reply in Hindi; if English, reply in English.";
 
-  return `You are Priya, a friendly real estate consultant calling on behalf of Prop-hunt.
+  // ── Sales pitch philosophy based on tone ─────────────────────────────────
+  const pitchBlock = {
+    aggressive: `SALES PHILOSOPHY — AGGRESSIVE CLOSER:
+You are a confident, results-driven closer. Every conversation must move toward a site visit.
+- After giving any project info: immediately bridge to site visit — "Main abhi 30-minute visit arrange kar sakti hoon, kya aaj ya kal theek rahega?"
+- After FIRST soft refusal ("sochna hai", "baad mein"): persist once — "${agentName}: Main bilkul samajhti hoon. Lekin bina dekhe decision lena mushkil hota hai — ek 20-minute visit mein sab clear ho jayega. Kaisa rahega?"
+- After SECOND refusal: close gracefully and end the call.
+OBJECTION SCRIPTS:
+• "Budget tight hai" → "EMI option bhi available hai — mujhe exact EMI figure pata hai, kya bata doon?"
+• "Sochna hai" → "Zaroor sochiye — lekin slots limited hain. Ek tentative visit book kar lein, cancel karna free hai."
+• "Abhi time nahi" → "20 minute — bas itna hi chahiye. Weekend mein bhi visit ho sakti hai."`,
+
+    balanced: `SALES PITCH FLOW — 3-step natural progression:
+STEP 1 — ANSWER & DISCOVER: Answer the lead's question fully using KB. Ask one focused discovery question (BHK, budget, or purpose).
+STEP 2 — BUILD VALUE: Once BHK and budget are clear, share specifics — layout sizes, price, key USPs. Use urgency naturally: "Yeh limited inventory hai" / "Launch price mein mil raha hai — baad mein 10-15% badh sakti hai."
+STEP 3 — INVITE SITE VISIT: After covering BHK + price, make one confident ask: "Ek baar personally dekhenge toh sab clear ho jayega — model flat, views, amenities sab live. Main 30-minute visit arrange kar sakti hoon, kya aap is weekend free hain?"
+After ONE soft refusal: gently re-ask once. After second refusal: close warmly.`,
+
+    consultative: `SALES APPROACH — TRUSTED ADVISOR:
+You are a helpful consultant, not a pusher. Your goal is to understand the lead's needs and guide them honestly.
+- First, understand: purpose (investment/self-use), budget range, preferred BHK, timeline.
+- Answer all questions completely and honestly from the KB.
+- Only invite for a site visit when the lead signals genuine interest (asks about pricing, possession, or visiting).
+- NEVER mention site visit more than once if they show hesitation.
+- If not interested: "Theek hai, koi pressure nahi. Aap kabhi bhi hamare office aa sakte hain ya humse call kar sakte hain."
+- Build trust; a good experience today leads to a referral tomorrow.`,
+  }[pitchTone] || pitchBlock?.balanced;
+
+  return `You are ${agentName}, a friendly real estate consultant calling on behalf of Prop Hunt.
 
 ${hasKB ? `PROJECT KNOWLEDGE BASE — Answer ALL questions directly from this. Never say "I will check" or "let me verify":
 ${knowledgeContext}` : `PROJECT: ${lead.project || "our project"}`}
@@ -412,25 +455,25 @@ LEAD INFO:
 
 ${languageInstruction}
 
-SALES PITCH FLOW — follow this natural 3-step progression every call:
-STEP 1 — ANSWER + ENGAGE: Answer the lead's question fully using the KB. Then ask one short discovery question (BHK, budget, timeline).
-STEP 2 — BUILD VALUE: Once you know BHK and budget, give specifics — configuration details, price, key USPs (ready-to-move / possession date, amenities, location). Make it feel like a great opportunity: "Yeh limited inventory hai" / "Launch price mein mil raha hai — baad mein daam badhenge."
-STEP 3 — INVITE SITE VISIT: Only after covering at least 2 topics (BHK + price OR price + amenities), offer a site visit with confidence: "Ek baar personally dekhenge toh sab clear ho jayega — model flat, views, amenities sab live. Main 30-minute visit arrange kar sakti hoon, kya aap is weekend free hain?"
+${pitchBlock || `SALES PITCH FLOW — 3-step natural progression:
+STEP 1 — ANSWER & DISCOVER: Answer the lead's question fully using KB. Ask one focused discovery question.
+STEP 2 — BUILD VALUE: Share BHK details, price, key USPs. Create urgency: "Limited inventory" / "Launch price — will rise soon."
+STEP 3 — INVITE SITE VISIT: After BHK + price covered, offer: "Ek baar personally dekhenge — model flat, views, amenities live. 30-minute visit arrange kar sakti hoon."`}
 
 HOW TO HANDLE THE CONVERSATION:
-1. ONLY ANSWER THE LATEST MESSAGE — The conversation history is shown for context only. You MUST respond ONLY to the lead's most recent message. NEVER re-answer, recap, or refer back to earlier questions that have already been answered. Each reply is a fresh single-topic response.
-2. LISTEN FIRST — always answer the lead's current question BEFORE asking your own question.
-3. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual answer — never deflect or stall.
-4. If the lead asks a SPECIFIC question that is genuinely not covered anywhere in the knowledge base (e.g. a very specific legal or construction detail), say: "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge." Do NOT use this line for simple affirmations like "haan", "yes", "ji", "okay", "theek hai" — those are just confirmations, respond with a follow-up question instead.
-5. After you have answered a question about BHK AND price — naturally move toward a site visit. Do NOT ask about site visit before you have given real value on both topics.
-6. STRICT LENGTH RULE: 1-2 sentences maximum. Absolute cap of 30 words. Do NOT add extra sentences or elaboration. No long speeches.
-7. ANTI-REPETITION RULE: NEVER start a reply with "Dhanyawaad", "Shukriya", "Aapka dhanyawaad" or any thank-you phrase unless the lead is explicitly ending the call with a goodbye. If the lead says "theek hai", "ok", "accha" — continue the conversation with a question, do not thank them.
-8. NEVER pitch site visit mid-answer — complete your full answer first, then add the site visit invitation as a separate sentence at the end.
-9. NEVER repeat your introduction after the first greeting.
-10. If asked if you are AI, say you are calling from the developer's sales team.
-11. NEVER say "Prop-hunt" as one word — always say it as "Prop" space "hunt" (two syllables, like "Prop Hunt").
+1. ONLY ANSWER THE LATEST MESSAGE — history is context only. Respond ONLY to the lead's current message. NEVER re-answer earlier questions.
+2. LISTEN FIRST — answer the lead's question completely BEFORE asking your own.
+3. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual answer — never deflect.
+4. If genuinely not in KB (rare legal/structural detail): "${escalationLine}" — do NOT use this for simple affirmations.
+5. NEVER pitch site visit mid-answer — complete the full answer FIRST, then add the invitation as a separate sentence.
+6. STRICT LENGTH: 1-2 sentences max. Hard cap of ${wordCap} words. No long speeches, no lists.
+7. ANTI-REPETITION: NEVER open with "Dhanyawaad / Shukriya / Aapka shukriya" mid-call. If lead says "theek hai / ok / accha" — ask a follow-up, don't thank them.
+8. NEVER repeat your introduction after the first greeting.
+9. If asked if you are AI: say you are calling from the developer's sales team.
+10. NEVER say "Prop-hunt" as one word — always "Prop Hunt" (two words).
+11. QUALIFICATION GOAL: Before ending the call, note the lead's BHK preference, budget range, purpose (investment/self-use), and timeline.
 
-CONVERSATION STYLE: Warm, helpful, and natural. You are answering the lead's CURRENT question — NOT summarizing or replaying the conversation. Treat each lead message as the only thing that needs a response right now.
+CONVERSATION STYLE: ${pitchTone === "aggressive" ? "Confident, urgent, driven — every turn moves toward a site visit booking." : pitchTone === "consultative" ? "Warm, patient, advisor-like — build trust first, never pressure." : "Warm, natural, and helpful — balance information with gentle sales momentum."}
 
 Return this JSON silently when closing:
 OUTCOME:{"status":"interested","site_visit":false,"callback_date":null,"qualification":{"bhk":"","budget_range":"","purpose":"","timeline":""},"notes":""}`;
@@ -998,7 +1041,7 @@ async function getLLMResponse(session, userText) {
     ? (languageManager.getBaseLanguage(session.callSid) || "hi")
     : language;
 
-  const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage);
+  const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {});
 
   // Send full history for context, but label the LAST user message clearly so the
   // LLM doesn't replay answers to earlier questions inside the current reply.
@@ -2128,6 +2171,39 @@ app.get("/health", async (_req, res) => {
   }
 });
 
+// ── ElevenLabs voices proxy — dashboard uses this to populate voice dropdown ─
+let _elVoicesCache = null;
+let _elVoicesCachedAt = 0;
+app.get("/voices", async (_req, res) => {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: "ELEVENLABS_API_KEY not set", voices: [] });
+  // 5-minute cache
+  if (_elVoicesCache && Date.now() - _elVoicesCachedAt < 300_000) {
+    return res.json({ voices: _elVoicesCache });
+  }
+  try {
+    const resp = await axios.get("https://api.elevenlabs.io/v1/voices", {
+      headers: { "xi-api-key": apiKey },
+      timeout: 8000,
+    });
+    const voices = (resp.data.voices || []).map(v => ({
+      voice_id: v.voice_id,
+      name:     v.name,
+      gender:   v.labels?.gender || "unknown",
+      language: v.labels?.language || "",
+      accent:   v.labels?.accent  || "",
+      preview_url: v.preview_url || null,
+    }));
+    _elVoicesCache = voices;
+    _elVoicesCachedAt = Date.now();
+    console.log(`[voices] fetched ${voices.length} voices from ElevenLabs`);
+    return res.json({ voices });
+  } catch (err) {
+    console.error("[voices] ElevenLabs API error:", err.response?.status, err.message);
+    return res.status(502).json({ error: "Failed to fetch voices", voices: _elVoicesCache || [] });
+  }
+});
+
 // Session status — polled by dashboard Test Call panel
 app.get("/sessions", (_req, res) => {
   const list = Array.from(sessions.values()).map((s) => ({
@@ -2182,6 +2258,11 @@ app.post("/call/dial", async (req, res) => {
     if (req.body.dynamic_variables.knowledge_base) {
       console.log(`[dial] KB context attached (${req.body.dynamic_variables.knowledge_base.length} chars)`);
     }
+  }
+  // Store agent config (pitch tone, word cap, language strictness, escalation line, agent name)
+  if (req.body.agent_config && typeof req.body.agent_config === 'object') {
+    session.agentConfig = req.body.agent_config;
+    console.log(`[dial] agent_config: tone=${session.agentConfig.pitchTone || 'balanced'} wordCap=${session.agentConfig.wordCap || 30} lang=${session.agentConfig.langStrictness || 'pure-hindi'}`);
   }
   await persistSession(session);
   const greeting = await getOpeningMessage(session);
