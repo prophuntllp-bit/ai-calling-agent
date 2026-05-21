@@ -1089,9 +1089,18 @@ function splitIntoSentences(text) {
 async function synthesizeAndStreamReply(ws, session, fullText) {
   const sentences = splitIntoSentences(fullText);
   let firstSent = false;
+  let lastKnownGeneration = session.telephony?.outGeneration || 0;
 
   for (const sentence of sentences) {
     if (!sentence || session.closed || session.telephony?.hangupScheduled) break;
+
+    // ── Barge-in guard: if outGeneration changed since the last send, a barge-in
+    // fired during our wait and cleared the audio queue. Stop streaming — continuing
+    // would send the next sentence onto a cleared channel and produce a skip/jump.
+    if (firstSent && (session.telephony?.outGeneration || 0) !== lastKnownGeneration) {
+      console.log(`[synthesize] barge-in detected mid-stream, stopping early callSid=${session.callSid}`);
+      break;
+    }
 
     const audio = await synthesizeSpeech(session, sentence);
     if (!audio) continue;
@@ -1104,6 +1113,8 @@ async function synthesizeAndStreamReply(ws, session, fullText) {
     if (ws.readyState !== WebSocket.OPEN) break;
     await recordAgentAudio(session, audio, "agent-reply");
     sendEnablexMedia(ws, session, audio, "streaming-sentence");
+    // Snapshot generation right after send — sendEnablexMedia increments it
+    lastKnownGeneration = session.telephony?.outGeneration || 0;
 
     // Wait for THIS sentence's playback to finish (use its own duration, not last audio's)
     // lastPlaybackMs is updated inside sendEnablexMedia for the just-sent chunk
@@ -1955,9 +1966,9 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
   if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
     if (hasSpeech) {
       inbound.bargeinFrames = (inbound.bargeinFrames || 0) + 1;
-      if (inbound.bargeinFrames >= 5) {
-        // 5 consecutive frames = 100ms of sustained speech — real human voice.
-        // Echo/room noise is brief and inconsistent; genuine barge-in is sustained.
+      if (inbound.bargeinFrames >= 6) {
+        // 6 consecutive frames = 120ms of sustained speech — real human voice.
+        // Phone echo and room noise rarely sustain 120ms; genuine barge-in does.
         clearEnablexMedia(ws, session);
         session.telephony.agentSpeakingUntil   = 0;
         session.telephony.echoSuppressionUntil = 0; // user is actually speaking — lift echo suppression too
