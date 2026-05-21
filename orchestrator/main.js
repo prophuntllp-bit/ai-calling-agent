@@ -1974,8 +1974,8 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
   if (!isCollecting) return;
   inbound.silenceFrames += 1;
   const bufferedMs = inbound.chunks.length * 20;
-  const enoughSpeech = inbound.speechFrames >= 8 || bufferedMs >= 1500;
-  const endedBySilence = inbound.silenceFrames >= 12;  // 240ms silence
+  const enoughSpeech = inbound.speechFrames >= 10 || bufferedMs >= 1500;
+  const endedBySilence = inbound.silenceFrames >= 21;  // 420ms silence — enough for natural mid-sentence pauses
   const tooLong = bufferedMs >= 10000;
 
   if ((enoughSpeech && endedBySilence) || tooLong) {
