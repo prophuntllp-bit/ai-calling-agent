@@ -389,6 +389,21 @@ function nowIso() {
 
 function buildSystemPrompt(lead, knowledgeContext, language, agentConfig = {}) {
   const hasKB = knowledgeContext && knowledgeContext.trim().length > 30;
+  const kbBlock = hasKB
+    ? `PROJECT KNOWLEDGE BASE — Answer ALL questions directly from this. Never say "I will check" or "let me verify":\n${knowledgeContext}`
+    : `PROJECT: ${lead.project || "our project"}`;
+
+  // ── PRIORITY: use system prompt authored in the Agents tab ───────────────
+  // The frontend generates the full prompt with {{placeholders}}; we fill them here.
+  if (agentConfig.systemPrompt && agentConfig.systemPrompt.trim().length > 50) {
+    return agentConfig.systemPrompt
+      .replace(/\{\{KNOWLEDGE_BASE\}\}/g,  kbBlock)
+      .replace(/\{\{LEAD_NAME\}\}/g,       lead.name         || "ji")
+      .replace(/\{\{PROJECT_NAME\}\}/g,    lead.project      || "the project")
+      .replace(/\{\{LEAD_BUDGET\}\}/g,     lead.budget       || "not discussed yet");
+  }
+
+  // ── FALLBACK: auto-generate (used when no agent is configured in dashboard) ──
   const lang = normalizeLanguageToISO(language || lead.language_preference || lead.language || "auto");
   const langNames = { hi: "Hindi", mr: "Marathi", ta: "Tamil", te: "Telugu", pa: "Punjabi", bn: "Bengali", gu: "Gujarati", kn: "Kannada", ml: "Malayalam", en: "English" };
   const langLabel = langNames[lang];
@@ -445,8 +460,7 @@ You are a helpful consultant, not a pusher. Your goal is to understand the lead'
 
   return `You are ${agentName}, a friendly real estate consultant calling on behalf of Prop Hunt.
 
-${hasKB ? `PROJECT KNOWLEDGE BASE — Answer ALL questions directly from this. Never say "I will check" or "let me verify":
-${knowledgeContext}` : `PROJECT: ${lead.project || "our project"}`}
+${kbBlock}
 
 LEAD INFO:
 - Name: ${lead.name}
