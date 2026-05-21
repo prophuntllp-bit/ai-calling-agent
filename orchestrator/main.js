@@ -1647,7 +1647,7 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
   const playbackMs = chunks.length * 20;
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
-  session.telephony.agentSpeakingUntil = Date.now() + playbackMs + 700;
+  session.telephony.agentSpeakingUntil = Date.now() + playbackMs + 2000; // +2s buffer for phone network jitter
   // Opening greeting is uninterruptible — protect it from barge-in so the lead
   // hears the full greeting even if background noise triggers speech detection
   if (label && label.startsWith("opening-greeting")) {
@@ -1909,9 +1909,10 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
   if (!session.inboundAudio) {
     session.inboundAudio = {
       chunks: [], speechFrames: 0, silenceFrames: 0,
+      bargeinFrames: 0,           // consecutive speech frames during agent playback
       processing: false, lastFlushAt: Date.now(),
-      speculativePromise: null,  // in-flight STT request fired early
-      speculativeAudio: null,    // audio snapshot sent speculatively
+      speculativePromise: null,   // in-flight STT request fired early
+      speculativeAudio: null,     // audio snapshot sent speculatively
     };
   }
   await recordCallerAudio(session, audioBuffer, "caller-media");
@@ -1931,14 +1932,25 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
     return; // Drop all inbound audio while opening plays
   }
 
-  // Barge-in: caller speaks while agent is playing → cancel agent audio immediately
-  if (hasSpeech && session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
-    clearEnablexMedia(ws, session);
-    session.telephony.agentSpeakingUntil = 0;
-    // Reset any speculative job — audio collected during agent speech is barge-in noise
-    inbound.speculativePromise = null;
-    inbound.speculativeAudio   = null;
-    console.log(`[enablex-media] barge-in detected callSid=${callSid}`);
+  // Barge-in: caller speaks while agent is playing → cancel agent audio.
+  // Require 3 consecutive speech frames (~60ms) before triggering — prevents a single
+  // breath, background noise, or room echo from cutting the agent mid-sentence.
+  if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
+    if (hasSpeech) {
+      inbound.bargeinFrames = (inbound.bargeinFrames || 0) + 1;
+      if (inbound.bargeinFrames >= 3) {
+        clearEnablexMedia(ws, session);
+        session.telephony.agentSpeakingUntil = 0;
+        inbound.bargeinFrames = 0;
+        inbound.speculativePromise = null;
+        inbound.speculativeAudio   = null;
+        console.log(`[enablex-media] barge-in confirmed (3 frames) callSid=${callSid}`);
+      }
+    } else {
+      inbound.bargeinFrames = 0; // reset on silence — must be sustained speech
+    }
+  } else {
+    inbound.bargeinFrames = 0;
   }
 
   if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
@@ -1975,7 +1987,7 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
   inbound.silenceFrames += 1;
   const bufferedMs = inbound.chunks.length * 20;
   const enoughSpeech = inbound.speechFrames >= 10 || bufferedMs >= 1500;
-  const endedBySilence = inbound.silenceFrames >= 21;  // 420ms silence — enough for natural mid-sentence pauses
+  const endedBySilence = inbound.silenceFrames >= 40;  // 800ms silence — allows natural Hindi speech pauses
   const tooLong = bufferedMs >= 10000;
 
   if ((enoughSpeech && endedBySilence) || tooLong) {
