@@ -412,15 +412,20 @@ LEAD INFO:
 
 ${languageInstruction}
 
+SALES PITCH FLOW — follow this natural 3-step progression every call:
+STEP 1 — ANSWER + ENGAGE: Answer the lead's question fully using the KB. Then ask one short discovery question (BHK, budget, timeline).
+STEP 2 — BUILD VALUE: Once you know BHK and budget, give specifics — configuration details, price, key USPs (ready-to-move / possession date, amenities, location). Make it feel like a great opportunity: "Yeh limited inventory hai" / "Launch price mein mil raha hai — baad mein daam badhenge."
+STEP 3 — INVITE SITE VISIT: Only after covering at least 2 topics (BHK + price OR price + amenities), offer a site visit with confidence: "Ek baar personally dekhenge toh sab clear ho jayega — model flat, views, amenities sab live. Main 30-minute visit arrange kar sakti hoon, kya aap is weekend free hain?"
+
 HOW TO HANDLE THE CONVERSATION:
 1. ONLY ANSWER THE LATEST MESSAGE — The conversation history is shown for context only. You MUST respond ONLY to the lead's most recent message. NEVER re-answer, recap, or refer back to earlier questions that have already been answered. Each reply is a fresh single-topic response.
 2. LISTEN FIRST — always answer the lead's current question BEFORE asking your own question.
 3. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual answer — never deflect or stall.
 4. If the lead asks a SPECIFIC question that is genuinely not covered anywhere in the knowledge base (e.g. a very specific legal or construction detail), say: "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge." Do NOT use this line for simple affirmations like "haan", "yes", "ji", "okay", "theek hai" — those are just confirmations, respond with a follow-up question instead.
-5. After answering, ask ONE short natural follow-up question (BHK preference, budget, or site visit).
-6. STRICT LENGTH RULE: 1-2 sentences maximum. Absolute cap of 25 words. Do NOT add extra sentences or elaboration. No long speeches.
+5. After you have answered a question about BHK AND price — naturally move toward a site visit. Do NOT ask about site visit before you have given real value on both topics.
+6. STRICT LENGTH RULE: 1-2 sentences maximum. Absolute cap of 30 words. Do NOT add extra sentences or elaboration. No long speeches.
 7. ANTI-REPETITION RULE: NEVER start a reply with "Dhanyawaad", "Shukriya", "Aapka dhanyawaad" or any thank-you phrase unless the lead is explicitly ending the call with a goodbye. If the lead says "theek hai", "ok", "accha" — continue the conversation with a question, do not thank them.
-8. Move toward a site visit naturally — only after the lead shows genuine interest.
+8. NEVER pitch site visit mid-answer — complete your full answer first, then add the site visit invitation as a separate sentence at the end.
 9. NEVER repeat your introduction after the first greeting.
 10. If asked if you are AI, say you are calling from the developer's sales team.
 11. NEVER say "Prop-hunt" as one word — always say it as "Prop" space "hunt" (two syllables, like "Prop Hunt").
@@ -720,71 +725,140 @@ function buildRuleBasedReply(session, userText = "") {
 
   if (/price|cost|rate|budget|how much|pricing|daam|kimat|kitna|kitne|paisa|qeemat|रेट|दाम|कीमत|क़ीमत|कितना|कितने|पैसे|रुपए|रुपये|प्राइस|बजट/.test(text)) {
     if (kbPriceSnippet) {
-      // We have actual price data from KB — give it directly
-      session.guidedState = "awaiting_callback_confirmation";
+      session.guidedState = "awaiting_site_visit";
       return T(
-        `For ${project}: ${kbPriceSnippet}. Would you like to book a site visit or get a callback with the full quote?`,
-        `${project} mein ${kbPriceSnippet}. Site visit book karein ya full quote ke liye callback chahiye?`
+        `For ${project}: ${kbPriceSnippet}. Premium gated township with clubhouse, pool, gym, and 24/7 security — at a great launch price. Would you like to book a site visit to see it in person?`,
+        `${project} mein ${kbPriceSnippet}. Premium gated township hai — clubhouse, pool, gym aur 24/7 security ke saath, abhi launch kimat mein. Kya site visit book karein taki aap personally dekh sakein?`
       );
     }
     session.guidedState = "awaiting_configuration";
     return T(
-      `For ${project}, do you want the two BHK price or the three BHK price?`,
+      `For ${project}, are you looking at 2 BHK or 3 BHK pricing?`,
       `${project} mein do BHK ka rate chahiye ya teen BHK ka?`
     );
   }
+  // ── BHK query — give real info first, DON'T jump to callback/site-visit yet ──
   if (wantsTwoBhk || wantsThreeBhk || wantsConfiguration) {
-    const cfg = isHindi
-      ? (wantsThreeBhk ? "teen BHK" : wantsTwoBhk ? "do BHK" : "aapki pasand ki")
-      : (wantsThreeBhk ? "three BHK" : wantsTwoBhk ? "two BHK" : "preferred configuration");
-    session.guidedState = "awaiting_callback_confirmation";
+    // If already past BHK info stage, fall through to LLM for follow-up questions
+    if (["price_discussed", "awaiting_site_visit", "site_visit_confirmed",
+         "awaiting_callback_confirmation", "callback_confirmed"].includes(guidedState)) {
+      return null;
+    }
+    const bhkLabel = isHindi
+      ? (wantsThreeBhk ? "teen BHK" : wantsTwoBhk ? "do BHK" : "BHK")
+      : (wantsThreeBhk ? "3 BHK" : wantsTwoBhk ? "2 BHK" : "BHK");
+    session._bhkType = wantsTwoBhk ? "2" : wantsThreeBhk ? "3" : "any";
+    session.guidedState = "bhk_discussed";
     return T(
-      `Got it, ${wantsThreeBhk ? "three BHK" : wantsTwoBhk ? "two BHK" : "preferred configuration"}. I can arrange a sales callback today with the live quote. Should I do that?`,
-      `Theek hai, ${cfg}. Main aaj hi sales team ka callback arrange kar sakti hoon live quote ke saath. Karoon?`
+      `${project} has beautiful ${bhkLabel} apartments in two layouts — Compact and Classic — available in Wings J and K with great views. Ready-to-move units are also available. Want me to share the current pricing?`,
+      `${project} mein ${bhkLabel} ke do options hain — Compact aur Classic layout, Wings J aur K mein sundar views ke saath. Ready-to-move units bhi hain. Kya main current kimat bata doon?`
     );
   }
-  if (guidedState === "awaiting_configuration" && !negativeIntent) {
-    // Check one more time before repeating — STT may produce varied forms of "2 BHK"
-    const impliedTwo = /\b(2|do|dono|two|to\b|too\b)\b/.test(text);
-    const impliedThree = /\b(3|teen|three|tin)\b/.test(text);
-    if (impliedTwo || impliedThree) {
-      const cfg = isHindi
-        ? (impliedThree ? "teen BHK" : "do BHK")
-        : (impliedThree ? "three BHK" : "two BHK");
-      session.guidedState = "awaiting_callback_confirmation";
+
+  // ── bhk_discussed → user wants price or follow-up ──────────────────────────
+  if (guidedState === "bhk_discussed") {
+    const wantsPrice = /price|cost|rate|kitna|kimat|rupaye|budget|lakh|crore|paisa|qeemat|रेट|दाम|कीमत|कितना|कितने|रुपए/.test(text);
+    if (wantsPrice || positiveIntent) {
+      session.guidedState = "awaiting_site_visit";
+      if (kbPriceSnippet) {
+        return T(
+          `For ${project}: ${kbPriceSnippet}. It's a premium gated community with clubhouse, pool, gym, and 24/7 security — and these are launch prices that will go up soon. Shall I book a site visit so you can see it in person?`,
+          `${project} mein ${kbPriceSnippet}. Yeh ek premium gated community hai — clubhouse, pool, gym aur 24/7 security ke saath. Abhi launch price mein mil raha hai, baad mein daam badhenge. Kya main ek site visit arrange karoon taki aap personally dekh sakein?`
+        );
+      }
+      // No KB price snippet — let LLM answer the price, but track state
+      session.guidedState = "awaiting_site_visit";
+      return null; // LLM will answer with KB price, then we're in awaiting_site_visit
+    }
+    // Any other question in bhk_discussed — LLM handles with KB
+    return null;
+  }
+
+  // ── awaiting_site_visit → respond to yes/no on site visit ─────────────────
+  if (guidedState === "awaiting_site_visit") {
+    if (positiveIntent) {
+      session.guidedState = "site_visit_confirmed";
       return T(
-        `Got it, ${impliedThree ? "three BHK" : "two BHK"}. I can arrange a sales callback today with the live quote. Should I do that?`,
-        `Theek hai, ${cfg}. Main aaj hi sales team ka callback arrange kar sakti hoon live quote ke saath. Karoon?`
+        `Wonderful! I have noted your site visit request for ${project}. Our sales team will call you within 24 hours to confirm the date and time. You will get to see the model apartment, views, and all amenities live. Thank you so much!`,
+        `Bahut achha! ${project} ke liye aapki site visit book ho gayi. Hamari team 24 ghante mein call karke time fix kar legi. Aap model flat, views aur saari amenities live dekhenge. Bahut shukriya aapka!`
       );
     }
-    // After 2 repeated asks without a clear answer, hand off to LLM to handle naturally
-    session._configAsks = (session._configAsks || 0) + 1;
-    if (session._configAsks >= 2) {
-      return null; // signal to caller: let LLM handle this turn
+    if (negativeIntent) {
+      session.guidedState = "price_discussed";
+      return T(
+        `No problem at all. Is there anything else you would like to know — amenities, location, possession date, or floor plans?`,
+        `Koi baat nahi. Kya kuch aur jaanna chahenge — amenities, jagah, possession date ya floor plan ke baare mein?`
+      );
     }
+    // Repeated site visit question
     return T(
-      `Please tell me, do you want the two BHK price or the three BHK price?`,
-      `Batayein, do BHK ka rate chahiye ya teen BHK ka?`
+      `Should I book a site visit for you at ${project}? It's just 30 minutes and you can see the actual flats and amenities yourself.`,
+      `Kya main ${project} ke liye site visit book kar doon? Sirf 30 minute lagte hain aur aap actual flats aur amenities khud dekh sakte hain.`
     );
   }
+
+  // ── site_visit_confirmed → warm close ─────────────────────────────────────
+  if (guidedState === "site_visit_confirmed") {
+    session.guidedState = "closed";
+    return T(
+      `Thank you. Looking forward to seeing you at ${project}. Have a great day! Goodbye.`,
+      `Aapka bahut shukriya. ${project} mein aapka intezaar rahega. Aapka din shubh ho! Namaste.`
+    );
+  }
+
+  // ── price_discussed → continue conversation or offer site visit ────────────
+  if (guidedState === "price_discussed") {
+    if (positiveIntent) {
+      session.guidedState = "awaiting_site_visit";
+      return T(
+        `I can arrange a site visit at ${project} for you. Our team will confirm the timing. Shall I book it?`,
+        `Main ${project} ke liye site visit arrange kar sakti hoon. Hamari team timing confirm kar legi. Karoon book?`
+      );
+    }
+    // Let LLM continue if they have more questions
+    return null;
+  }
+
+  // ── awaiting_configuration — legacy state, keep for backward compat ────────
+  if (guidedState === "awaiting_configuration" && !negativeIntent) {
+    const impliedTwo   = /\b(2|do|dono|two|to\b|too\b)\b/.test(text);
+    const impliedThree = /\b(3|teen|three|tin)\b/.test(text);
+    if (impliedTwo || impliedThree) {
+      session._bhkType = impliedTwo ? "2" : "3";
+      session.guidedState = "bhk_discussed";
+      const bhkLabel = isHindi ? (impliedThree ? "teen BHK" : "do BHK") : (impliedThree ? "3 BHK" : "2 BHK");
+      return T(
+        `${project} has ${bhkLabel} in Compact and Classic layouts in Wings J and K with great views. Shall I share the pricing?`,
+        `${project} mein ${bhkLabel} Compact aur Classic layout mein Wings J aur K mein available hai. Kimat bata doon?`
+      );
+    }
+    session._configAsks = (session._configAsks || 0) + 1;
+    if (session._configAsks >= 2) return null;
+    return T(
+      `Please tell me, are you interested in 2 BHK or 3 BHK?`,
+      `Batayein, do BHK mein interest hai ya teen BHK mein?`
+    );
+  }
+
+  // ── awaiting_callback_confirmation — legacy, redirect to site visit ────────
   if (guidedState === "awaiting_callback_confirmation") {
     if (positiveIntent) {
-      session.guidedState = "callback_confirmed";
+      session.guidedState = "site_visit_confirmed";
       return T(
-        `Done. I will arrange the callback today. Thank you for your time. Goodbye.`,
-        `Bilkul. Main aaj callback arrange kar dungi. Aapka bahut shukriya. Namaste.`
+        `I have noted your site visit request for ${project}. Our team will call you today to confirm the time. Thank you!`,
+        `${project} ke liye site visit note kar li hai. Hamari team aaj call karegi time fix karne ke liye. Shukriya!`
       );
     }
     if (negativeIntent) {
       session.guidedState = "callback_declined";
       return T(
-        `Understood. I will not schedule a callback right now. Thank you for your time. Goodbye.`,
-        `Theek hai, abhi callback nahi karta. Aapka shukriya. Namaste.`
+        `No problem. Thank you for your time. Have a great day!`,
+        `Koi baat nahi. Aapka shukriya. Aapka din shubh ho!`
       );
     }
     return T(
-      `Should I schedule the callback for today?`,
-      `Kya main aaj callback schedule karoon?`
+      `Shall I book a site visit at ${project} for you today?`,
+      `Kya main aaj ${project} ke liye site visit book kar doon?`
     );
   }
   if (guidedState === "awaiting_close_confirmation") {
@@ -853,28 +927,33 @@ function buildRuleBasedReply(session, userText = "") {
 }
 
 function isTerminalGuidedState(session) {
-  return ["callback_confirmed", "callback_declined", "closed"].includes(session?.guidedState || "");
+  return ["callback_confirmed", "callback_declined", "site_visit_confirmed", "closed"].includes(session?.guidedState || "");
 }
 
 function shouldUseGuidedReply(session, userText = "") {
   const text = String(userText || "").toLowerCase().trim();
   const guidedState = session?.guidedState || null;
 
-  // Terminal states — conversation is already wrapping up, guided handles it
-  if (["callback_confirmed", "callback_declined", "closed"].includes(guidedState)) return true;
+  // Terminal states — guided wraps up cleanly
+  if (["callback_confirmed", "callback_declined", "site_visit_confirmed", "closed"].includes(guidedState)) return true;
 
-  // Awaiting callback yes/no — guided handles this cleanly
-  if (guidedState === "awaiting_callback_confirmation") return true;
+  // Awaiting yes/no on site visit or legacy callback — guided handles
+  if (["awaiting_callback_confirmation", "awaiting_site_visit"].includes(guidedState)) return true;
+
+  // In bhk_discussed state — guided handles price follow-up and positive affirmations
+  if (guidedState === "bhk_discussed") return true;
+
+  // price_discussed — guided handles positive/close, LLM handles further questions
+  if (guidedState === "price_discussed" && /yes|haan|ji\b|sure|okay|ok|theek|bilkul|zaroor|ha\b/.test(text)) return true;
 
   // Clear goodbye / not interested — guided ends the call gracefully
   if (/\b(bye|goodbye|alvida|band karo|nahi chahiye|not interested|baad mein karana|later call|mujhe nahi chahiye|thank you|thanks|ok bye|ok thanks|theek hai ab|chalta hoon|chalti hoon|achha chalta|chalte hain)\b|थैंक\s*यू|धन्यवाद|शुक्रिया|अलविदा|चलते\s*हैं|चलता\s*हूँ|बाय/.test(text)) return true;
 
-  // BHK / configuration questions — route to guided reply so LLM can't inject
-  // unrelated KB content (e.g. jumping to "Construction Linked Plan" when asked about 2BHK)
+  // BHK / configuration questions — route to guided so LLM can't inject payment-plan tangents
   const hasBhkQuery = /(?:2|two|to\b|too\b|do\b|3|three|teen|4|four|char|1|one|ek)\s*(?:b\s*h\s*k|bhk|vhk|dhk)\b|(?:bhk|vhk|dhk)\b|configuration\b|flat\s+(?:size|type)|बीएचके|बी\.?एच\.?के/.test(text);
   if (hasBhkQuery) return true;
 
-  // Everything else (amenities, location details, open-ended Qs, etc.) → LLM with KB
+  // Everything else (amenities, location, possession date, open-ended Qs) → LLM with KB
   return false;
 }
 
