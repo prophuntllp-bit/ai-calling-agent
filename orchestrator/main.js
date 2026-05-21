@@ -397,8 +397,8 @@ function buildSystemPrompt(lead, knowledgeContext, language) {
     ? ` Use pure conversational Hindi words — avoid English words wherever a natural Hindi word exists (e.g. "kimat" not "price", "jagah" not "location", "kamre" not "rooms", "suvidha" not "facility", "samay" not "time"). Write numbers and units in full words that TTS can pronounce (e.g. "pachaas lakh rupaye" or "50 lakh rupaye", "sau square feet"). Do NOT write abbreviations like Rs, sq.ft, BHK — spell them out.`
     : "";
   const languageInstruction = langLabel && lang !== "en" && lang !== "auto"
-    ? `IMPORTANT: The lead is speaking ${langLabel}. Always reply in pure ${langLabel} — no English words mixed in.${hindiExtra} Never switch to English.`
-    : "Mirror the lead's language — if they speak Hindi, reply in pure Hindi; if English, reply in English.";
+    ? `CRITICAL LANGUAGE RULE — THIS OVERRIDES EVERYTHING ELSE: The lead is speaking ${langLabel}. You MUST reply in ${langLabel} for EVERY single message — including greetings, goodbyes, closing lines, and follow-up questions. NEVER write even one word in English. If you reply in English for any reason, that is a critical failure.${hindiExtra}`
+    : "Mirror the lead's language exactly — if they speak Hindi, reply in Hindi; if English, reply in English.";
 
   return `You are Priya, a friendly real estate consultant calling on behalf of Prop-hunt.
 
@@ -692,6 +692,17 @@ function buildRuleBasedReply(session, userText = "") {
   const isHindi = lang === "hi";
   const kbPriceSnippet = extractPriceFromKB(session.dynamicVariables?.knowledge_base || "");
 
+  // ── Universal farewell — end call immediately regardless of state ───────────
+  // Catches: "thank you", "थैंक यू", "धन्यवाद", "bye", "chalo", etc.
+  const universalFarewell = /\b(thank you|thanks|bye|goodbye|alvida|ok bye|ok thanks|chalo ab|ab chalta|achha theek|chalta hoon|chalti hoon|chalte hain)\b|थैंक\s*यू|धन्यवाद|शुक्रिया|अलविदा|बाय\b|चलो\s*अब|ठीक\s*है\s*चलते|चलते\s*हैं/.test(text);
+  if (universalFarewell) {
+    session.guidedState = "closed";
+    return T(
+      `Thank you for your time. Have a great day. Goodbye!`,
+      `Bahut shukriya aapka waqt dene ke liye. Aapka din shubh ho. Namaste!`
+    );
+  }
+
   // ── Intent patterns — Latin (Romanised Hindi) + Devanagari (Sarvam STT output) ──
   const wantsConfiguration = /(?:\b|[^a-z0-9])(?:1|one|ek|2|two|do|3|three|teen|4|four|char)\s*(?:b|v|d)?\s*h\s*k\b|bhk|vhk|dhk|dbhk|vbhk|configuration|config|flat size|carpet|sq ?ft|बीएचके|बी\.?एच\.?के|bhk/.test(text);
   const wantsTwoBhk = /(?:2|two|to|too|do|d)\s*(?:b|v|d)?\s*h\s*k|dbhk|2bhk|two bhk|do bhk|दो\s*(?:बीएचके|बी\s*एच\s*के|bhk)|2\s*(?:बीएचके|bhk)/.test(text);
@@ -856,7 +867,7 @@ function shouldUseGuidedReply(session, userText = "") {
   if (guidedState === "awaiting_callback_confirmation") return true;
 
   // Clear goodbye / not interested — guided ends the call gracefully
-  if (/\b(bye|goodbye|alvida|band karo|nahi chahiye|not interested|baad mein karana|later call|mujhe nahi chahiye)\b/.test(text)) return true;
+  if (/\b(bye|goodbye|alvida|band karo|nahi chahiye|not interested|baad mein karana|later call|mujhe nahi chahiye|thank you|thanks|ok bye|ok thanks|theek hai ab|chalta hoon|chalti hoon|achha chalta|chalte hain)\b|थैंक\s*यू|धन्यवाद|शुक्रिया|अलविदा|चलते\s*हैं|चलता\s*हूँ|बाय/.test(text)) return true;
 
   // Everything else (questions, pricing, BHK, amenities, location, etc.) → LLM with KB
   return false;
