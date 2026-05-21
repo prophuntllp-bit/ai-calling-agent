@@ -409,18 +409,19 @@ LEAD INFO:
 ${languageInstruction}
 
 HOW TO HANDLE THE CONVERSATION:
-1. LISTEN FIRST — always answer the lead's question BEFORE asking your own question.
-2. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual answer — never deflect or stall.
-3. If the lead asks a SPECIFIC question that is genuinely not covered anywhere in the knowledge base (e.g. a very specific legal or construction detail), say: "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge." Do NOT use this line for simple affirmations like "haan", "yes", "ji", "okay", "theek hai" — those are just confirmations, respond with a follow-up question instead.
-4. After answering, ask ONE short natural follow-up question (BHK preference, budget, or site visit).
-5. STRICT LENGTH RULE: 1-2 sentences maximum. Absolute cap of 25 words. Do NOT add extra sentences or elaboration. No long speeches.
-6. ANTI-REPETITION RULE: NEVER start a reply with "Dhanyawaad", "Shukriya", "Aapka dhanyawaad" or any thank-you phrase unless the lead is explicitly ending the call with a goodbye. If the lead says "theek hai", "ok", "accha" — continue the conversation with a question, do not thank them.
-7. Move toward a site visit naturally — only after the lead shows genuine interest.
-8. NEVER repeat your introduction after the first greeting.
-9. If asked if you are AI, say you are calling from the developer's sales team.
-10. NEVER say "Prop-hunt" as one word — always say it as "Prop" space "hunt" (two syllables, like "Prop Hunt").
+1. ONLY ANSWER THE LATEST MESSAGE — The conversation history is shown for context only. You MUST respond ONLY to the lead's most recent message. NEVER re-answer, recap, or refer back to earlier questions that have already been answered. Each reply is a fresh single-topic response.
+2. LISTEN FIRST — always answer the lead's current question BEFORE asking your own question.
+3. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual answer — never deflect or stall.
+4. If the lead asks a SPECIFIC question that is genuinely not covered anywhere in the knowledge base (e.g. a very specific legal or construction detail), say: "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge." Do NOT use this line for simple affirmations like "haan", "yes", "ji", "okay", "theek hai" — those are just confirmations, respond with a follow-up question instead.
+5. After answering, ask ONE short natural follow-up question (BHK preference, budget, or site visit).
+6. STRICT LENGTH RULE: 1-2 sentences maximum. Absolute cap of 25 words. Do NOT add extra sentences or elaboration. No long speeches.
+7. ANTI-REPETITION RULE: NEVER start a reply with "Dhanyawaad", "Shukriya", "Aapka dhanyawaad" or any thank-you phrase unless the lead is explicitly ending the call with a goodbye. If the lead says "theek hai", "ok", "accha" — continue the conversation with a question, do not thank them.
+8. Move toward a site visit naturally — only after the lead shows genuine interest.
+9. NEVER repeat your introduction after the first greeting.
+10. If asked if you are AI, say you are calling from the developer's sales team.
+11. NEVER say "Prop-hunt" as one word — always say it as "Prop" space "hunt" (two syllables, like "Prop Hunt").
 
-CONVERSATION STYLE: Warm, helpful, and natural. You are answering the lead's questions — NOT running a fixed script. Always respond to what they actually said.
+CONVERSATION STYLE: Warm, helpful, and natural. You are answering the lead's CURRENT question — NOT summarizing or replaying the conversation. Treat each lead message as the only thing that needs a response right now.
 
 Return this JSON silently when closing:
 OUTCOME:{"status":"interested","site_visit":false,"callback_date":null,"qualification":{"bhk":"","budget_range":"","purpose":"","timeline":""},"notes":""}`;
@@ -861,7 +862,7 @@ function shouldUseGuidedReply(session, userText = "") {
 async function getLLMResponse(session, userText) {
   const language = languageManager.getLanguage(session.callSid);
   session.history.push({ role: "user", content: userText });
-  session.history = session.history.slice(-12);
+  session.history = session.history.slice(-10);  // keep last 5 turns — enough context, avoids history replay
 
   // Guided reply path — pure in-memory, ~0ms (handles pricing/BHK/location/callback)
   // Returns null when it wants LLM to take over (e.g. user is confused, not answering config question)
@@ -899,7 +900,12 @@ async function getLLMResponse(session, userText) {
     : language;
 
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage);
-  const messages = [{ role: "system", content: systemPrompt }, ...session.history];
+
+  // Send full history for context, but label the LAST user message clearly so the
+  // LLM doesn't replay answers to earlier questions inside the current reply.
+  const historyContext = session.history.slice(0, -1);  // everything except the current message
+  const currentTurn   = { role: "user", content: `[CURRENT — respond to this only]: ${userText}` };
+  const messages = [{ role: "system", content: systemPrompt }, ...historyContext, currentTurn];
 
   // ── OpenAI primary (OPENAI_API_KEY set) ────────────────────────────────────
   if (process.env.OPENAI_API_KEY) {
