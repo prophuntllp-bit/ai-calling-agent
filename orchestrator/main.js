@@ -1658,7 +1658,7 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
   const playbackMs = chunks.length * 20;
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
-  session.telephony.agentSpeakingUntil = Date.now() + playbackMs + 2000; // +2s buffer for phone network jitter
+  session.telephony.agentSpeakingUntil = Date.now() + playbackMs + 600; // +600ms for network jitter — enough to cover phone delay without eating user's first words
   // Opening greeting is uninterruptible — protect it from barge-in so the lead
   // hears the full greeting even if background noise triggers speech detection
   if (label && label.startsWith("opening-greeting")) {
@@ -1998,7 +1998,7 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
   inbound.silenceFrames += 1;
   const bufferedMs = inbound.chunks.length * 20;
   const enoughSpeech = inbound.speechFrames >= 10 || bufferedMs >= 1500;
-  const endedBySilence = inbound.silenceFrames >= 40;  // 800ms silence — allows natural Hindi speech pauses
+  const endedBySilence = inbound.silenceFrames >= 30;  // 600ms silence — natural pause without feeling sluggish
   const tooLong = bufferedMs >= 10000;
 
   if ((enoughSpeech && endedBySilence) || tooLong) {
