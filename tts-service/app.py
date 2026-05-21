@@ -48,21 +48,21 @@ SARVAM_TTS_SAMPLE_RATE = int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "8000"))
 # ── ElevenLabs ────────────────────────────────────────────────────────────────
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_API_URL = os.getenv("ELEVENLABS_API_URL", "https://api.elevenlabs.io").rstrip("/")
-# eleven_v3: ElevenLabs v3 — best emotional range and naturalness, good multilingual support
-ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_v3")
+# eleven_flash_v2_5: fast + low latency, good Hindi multilingual support
+ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
 # Monika Sogam — Hindi Modulated Voice (1qEiC6qsybMkmnNdVMbK)
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "1qEiC6qsybMkmnNdVMbK")
 # pcm_8000 = raw 8kHz 16-bit little-endian PCM — zero resampling needed for EnableX phone calls
 ELEVENLABS_OUTPUT_FORMAT = os.getenv("ELEVENLABS_OUTPUT_FORMAT", "pcm_8000")
-# Voice quality settings tuned for emotional, natural-sounding Hindi calls (v3):
-#   stability 0.45  = more tonal variation — less robotic, more human-like
-#   similarity 0.80 = close to original Monika voice but allows emotional flex
-#   style 0.30      = expressive style boost — warmth and natural cadence
-#   speed 0.88      = slightly slower — clearer on 8kHz phone line
-ELEVENLABS_STABILITY = float(os.getenv("ELEVENLABS_STABILITY", "0.45"))
-ELEVENLABS_SIMILARITY_BOOST = float(os.getenv("ELEVENLABS_SIMILARITY_BOOST", "0.80"))
-ELEVENLABS_STYLE = float(os.getenv("ELEVENLABS_STYLE", "0.30"))
-ELEVENLABS_SPEED = float(os.getenv("ELEVENLABS_SPEED", "0.88"))
+# Emotion-tuned settings for flash_v2_5 — warm and natural, not robotic:
+#   stability 0.35  = low stability = high tonal variation = expressive, human-like delivery
+#   similarity 0.75 = gives the voice room to flex emotionally vs original recording
+#   style 0.45      = strong style boost — warmth, enthusiasm, natural conversational cadence
+#   speed 0.85      = slightly slower — more deliberate, warmer feel on 8kHz phone line
+ELEVENLABS_STABILITY = float(os.getenv("ELEVENLABS_STABILITY", "0.35"))
+ELEVENLABS_SIMILARITY_BOOST = float(os.getenv("ELEVENLABS_SIMILARITY_BOOST", "0.75"))
+ELEVENLABS_STYLE = float(os.getenv("ELEVENLABS_STYLE", "0.45"))
+ELEVENLABS_SPEED = float(os.getenv("ELEVENLABS_SPEED", "0.85"))
 
 # Voice map: gender → voice_id (override with env vars)
 ELEVENLABS_VOICE_MAP = {
