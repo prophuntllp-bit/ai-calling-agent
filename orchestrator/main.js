@@ -993,11 +993,13 @@ async function getOpeningMessage(session) {
   const leadName = session.lead?.name || "ji";
   const projectName = session.lead?.project || session.campaign?.name || "hamare project";
   const interpolated = explicitOpening.trim()
-    .replace(/\{lead[\s_]?name\}/gi, leadName)
-    .replace(/\{name\}/gi, leadName)
-    .replace(/\{lead\}/gi, leadName)
-    .replace(/\{project[\s_]?name\}/gi, projectName)
-    .replace(/\{project\}/gi, projectName);
+    .replace(/\{[\s]*lead[\s_]*name[\s]*\}/gi, leadName)
+    .replace(/\{[\s]*name[\s]*\}/gi, leadName)
+    .replace(/\{[\s]*lead[\s]*\}/gi, leadName)
+    .replace(/\[Lead Name\]/gi, leadName)
+    .replace(/\{[\s]*project[\s_]*name[\s]*\}/gi, projectName)
+    .replace(/\{[\s]*project[\s]*\}/gi, projectName)
+    .replace(/\[Project Name\]/gi, projectName);
 
   const rawOpening = normalizeTtsText(interpolated);
   const opening = rawOpening
