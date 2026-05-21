@@ -93,6 +93,15 @@ fs.mkdirSync(config.recordingsDir, { recursive: true });
 
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+// CORS — allow dashboard (Vercel) and localhost to call all HTTP endpoints
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Internal-Token');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 // Recordings endpoint — Redis-first so files survive container restarts / redeploys.
 // Falls back to local disk for files written this session that haven't been cached yet.
 app.get("/recordings/:callSid/mixed.wav", async (req, res) => {
