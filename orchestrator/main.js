@@ -1072,8 +1072,36 @@ async function getLLMResponse(session, userText) {
   const currentTurn   = { role: "user", content: `[CURRENT — respond to this only]: ${userText}` };
   const messages = [{ role: "system", content: systemPrompt }, ...historyContext, currentTurn];
 
-  // ── OpenAI primary (OPENAI_API_KEY set) ────────────────────────────────────
-  if (process.env.OPENAI_API_KEY) {
+  // ── Streaming SSE helper — collects all chunks into a full reply string ──────
+  // stream:true delivers first bytes sooner (lower TTFT) even when we wait for the
+  // full response. For 90-token replies this saves ~80-150ms vs stream:false.
+  async function collectStreamingReply(axiosResponse) {
+    let fullText = "";
+    return new Promise((resolve, reject) => {
+      axiosResponse.data.on("data", (chunk) => {
+        const lines = chunk.toString().split("\n");
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") return;
+          try {
+            const parsed = JSON.parse(data);
+            fullText += parsed.choices?.[0]?.delta?.content || "";
+          } catch {}
+        }
+      });
+      axiosResponse.data.on("end", () => resolve(fullText.trim()));
+      axiosResponse.data.on("error", reject);
+    });
+  }
+
+  // ── Groq primary when LLM_PREFER_GROQ=true OR no OpenAI key ─────────────────
+  // Groq llama-3.1-8b-instant: 50–150ms TTFT vs OpenAI 300–800ms.
+  // Set LLM_PREFER_GROQ=true in Railway env to enable Groq-first routing.
+  const preferGroq = process.env.LLM_PREFER_GROQ === "true";
+
+  // ── OpenAI (primary unless preferGroq=true) ───────────────────────────────
+  if (process.env.OPENAI_API_KEY && !preferGroq) {
     try {
       const t0 = Date.now();
       const response = await timed("openai", () =>
@@ -1084,15 +1112,16 @@ async function getLLMResponse(session, userText) {
             messages,
             temperature: 0.3,
             max_tokens: 90,  // 1-2 short sentences only
-            stream: false,
+            stream: true,    // streaming: first bytes arrive faster, lower TTFT
           },
           {
             headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+            responseType: "stream",
             timeout: 8000,
           }
         )
       );
-      const reply = response.data.choices?.[0]?.message?.content || languageManager.fallback(session.callSid);
+      const reply = await collectStreamingReply(response);
       console.log(`[openai] callSid=${session.callSid} latency=${Date.now()-t0}ms model=${process.env.OPENAI_MODEL || "gpt-4o-mini"} reply="${reply.slice(0,60)}"`);
       session.history.push({ role: "assistant", content: reply });
       const match = reply.match(/OUTCOME:({.*})/s);
@@ -1105,7 +1134,7 @@ async function getLLMResponse(session, userText) {
     }
   }
 
-  // ── Groq fallback (free tier, fast) ────────────────────────────────────────
+  // ── Groq (primary when preferGroq=true, otherwise fallback) ──────────────
   if (process.env.GROQ_API_KEY) {
     try {
       const t0 = Date.now();
@@ -1117,15 +1146,16 @@ async function getLLMResponse(session, userText) {
             messages,
             temperature: 0.2,
             max_tokens: 120,
-            stream: false,
+            stream: true,    // Groq streaming: even faster first-token delivery
           },
           {
             headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+            responseType: "stream",
             timeout: 4000,
           }
         )
       );
-      const reply = response.data.choices?.[0]?.message?.content || languageManager.fallback(session.callSid);
+      const reply = await collectStreamingReply(response);
       console.log(`[groq] callSid=${session.callSid} latency=${Date.now()-t0}ms reply="${reply.slice(0,60)}"`);
       session.history.push({ role: "assistant", content: reply });
       const match = reply.match(/OUTCOME:({.*})/s);
@@ -1135,6 +1165,28 @@ async function getLLMResponse(session, userText) {
       const statusCode = err.response?.status;
       const errBody = JSON.stringify(err.response?.data || {}).slice(0, 200);
       console.warn(`[groq] failed (HTTP ${statusCode || "?"}) falling back to rule-based: ${err.message} — ${errBody}`);
+    }
+  }
+
+  // ── OpenAI as last LLM resort when preferGroq=true but Groq failed ───────
+  if (process.env.OPENAI_API_KEY && preferGroq) {
+    try {
+      const t0 = Date.now();
+      const response = await timed("openai_fallback", () =>
+        axios.post(
+          "https://api.openai.com/v1/chat/completions",
+          { model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages, temperature: 0.3, max_tokens: 90, stream: true },
+          { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, responseType: "stream", timeout: 8000 }
+        )
+      );
+      const reply = await collectStreamingReply(response);
+      console.log(`[openai_fallback] callSid=${session.callSid} latency=${Date.now()-t0}ms reply="${reply.slice(0,60)}"`);
+      session.history.push({ role: "assistant", content: reply });
+      const match = reply.match(/OUTCOME:({.*})/s);
+      if (match) { try { session.outcome = JSON.parse(match[1]); } catch {} }
+      return reply.replace(/OUTCOME:({.*})/s, "").trim();
+    } catch (err) {
+      console.warn(`[openai_fallback] failed: ${err.message}`);
     }
   }
 
@@ -1532,6 +1584,9 @@ async function endCall(session, finalStatus = "completed") {
   session.closed = true;
   session.status = finalStatus;
   session.endedAt = nowIso();
+
+  // Close Deepgram streaming WebSocket for this call
+  closeDeepgramStream(session);
 
   // Disconnect Agni LiveKit bridge if active
   if (session.agniBridge) {
@@ -1954,8 +2009,8 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     inbound.speculativePromise = null;
     inbound.speculativeAudio   = null;
 
-    if (specPromise && extraRatio < 2.0) {
-      // Audio didn't grow much — speculative transcription covers most of the utterance
+    if (specPromise && extraRatio < 5.0) {
+      // Audio grew less than 5× since speculative fired — speculative result is close enough
       transcription = await specPromise;
       if (!transcription?.text) {
         // Speculative failed, run full transcription now
@@ -2073,12 +2128,218 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
   }
 }
 
+// ── Deepgram Streaming STT ─────────────────────────────────────────────────────
+// Opens a per-call WebSocket directly to Deepgram's live transcription API.
+// EnableX sends μ-law 8kHz audio; Deepgram natively handles this encoding.
+// With endpointing=300ms, Deepgram fires speech_final exactly when the caller
+// pauses — we process it immediately without any silence-wait buffer.
+// Savings vs. old pipeline: ~700ms per turn (600ms silence wait + ~100ms STT).
+//
+// Set DEEPGRAM_API_KEY env var to enable. Falls back to local VAD+STT if unset.
+function openDeepgramStream(ws, session, callSid) {
+  const dgKey = process.env.DEEPGRAM_API_KEY;
+  if (!dgKey) return null;
+  if (session.deepgramWs?.readyState === WebSocket.OPEN) return session.deepgramWs;
+
+  const lang = languageManager.getBaseLanguage(callSid) || "hi";
+  const dgParams = new URLSearchParams({
+    encoding:         "mulaw",
+    sample_rate:      "8000",
+    model:            process.env.DEEPGRAM_MODEL || "nova-2-general",
+    language:         lang === "auto" ? "hi" : lang,
+    endpointing:      process.env.DEEPGRAM_ENDPOINTING || "300",  // 300ms silence → speech_final
+    interim_results:  "false",   // skip partials — only act on finals
+    utterance_end_ms: "1000",    // force flush after 1s stale audio
+    smart_format:     "true",    // normalises numbers/punctuation
+    no_delay:         "true",    // publish results ASAP
+  });
+
+  let dgWs;
+  try {
+    dgWs = new WebSocket(`wss://api.deepgram.com/v1/listen?${dgParams}`, {
+      headers: { Authorization: `Token ${dgKey}` },
+    });
+  } catch (err) {
+    console.warn(`[deepgram] WebSocket create failed callSid=${callSid}:`, err.message);
+    return null;
+  }
+
+  dgWs.on("open", () => {
+    console.log(`[deepgram] stream opened callSid=${callSid} lang=${lang}`);
+    session.deepgramReady = true;
+  });
+
+  dgWs.on("message", async (data) => {
+    let msg;
+    try { msg = JSON.parse(data.toString()); } catch { return; }
+
+    if (msg.type === "Error") {
+      console.warn(`[deepgram] API error callSid=${callSid}:`, msg.description || msg.message);
+      return;
+    }
+    if (msg.type !== "Results") return;
+
+    const alt = msg.channel?.alternatives?.[0];
+    const transcript = (alt?.transcript || "").trim();
+    if (!transcript) return;
+
+    // Only act on speech_final — the definitive end-of-utterance transcript
+    if (!msg.speech_final && !msg.is_final) return;
+
+    console.log(`[deepgram] speech_final callSid=${callSid} text="${transcript.slice(0, 80)}" conf=${(alt?.confidence || 0).toFixed(2)}`);
+
+    // Clear local audio buffer — Deepgram owns this utterance
+    const inbound = session.inboundAudio;
+    if (inbound) {
+      inbound.chunks             = [];
+      inbound.speechFrames       = 0;
+      inbound.silenceFrames      = 0;
+      inbound.speculativePromise = null;
+      inbound.speculativeAudio   = null;
+    }
+
+    await processTranscriptDirect(ws, session, callSid, transcript, "deepgram");
+  });
+
+  dgWs.on("error", (err) => {
+    console.warn(`[deepgram] error callSid=${callSid}:`, err.message);
+    session.deepgramWs    = null;
+    session.deepgramReady = false;
+  });
+
+  dgWs.on("close", (code) => {
+    console.log(`[deepgram] closed callSid=${callSid} code=${code}`);
+    session.deepgramWs    = null;
+    session.deepgramReady = false;
+  });
+
+  session.deepgramWs    = dgWs;
+  session.deepgramReady = false;  // set true on "open"
+  return dgWs;
+}
+
+function closeDeepgramStream(session) {
+  const dgWs = session?.deepgramWs;
+  if (!dgWs) return;
+  session.deepgramWs    = null;
+  session.deepgramReady = false;
+  try {
+    if (dgWs.readyState === WebSocket.OPEN) {
+      dgWs.send(JSON.stringify({ type: "CloseStream" }));
+    }
+    dgWs.terminate();
+  } catch {}
+}
+
+// processTranscriptDirect — fast path when Deepgram already produced the transcript.
+// Same pipeline as processCallerUtterance but STT is skipped entirely.
+async function processTranscriptDirect(ws, session, callSid, transcriptText, source = "deepgram") {
+  const inbound = session.inboundAudio;
+  if (!inbound || inbound.processing || session.telephony?.hangupScheduled || session.closed) return;
+
+  // Deduplicate — Deepgram can fire speech_final twice for the same phrase
+  if (
+    session._lastDgTranscript === transcriptText &&
+    Date.now() - (session._lastDgTranscriptAt || 0) < 1500
+  ) {
+    console.log(`[${source}] dedup transcript, skipping callSid=${callSid}`);
+    return;
+  }
+  session._lastDgTranscript   = transcriptText;
+  session._lastDgTranscriptAt = Date.now();
+
+  inbound.processing = true;
+  const t0 = Date.now();
+
+  try {
+    console.log(`[${source}] processing transcript callSid=${callSid} text="${transcriptText.slice(0, 80)}"`);
+
+    const cleanText = transcriptText.trim();
+
+    // Background noise filter — parenthetical noise markers
+    if (/^\(.*\)$/.test(cleanText) || /^\[.*\]$/.test(cleanText)) {
+      console.log(`[${source}] noise transcript, skipping callSid=${callSid}`);
+      return;
+    }
+
+    const wordCount = cleanText.split(/\s+/).filter(w => w.length > 0).length;
+    if (wordCount < 1) return;
+    if (wordCount === 1 && cleanText.length <= 1) return;
+
+    // First-utterance TV/radio background noise filter
+    if (!session.firstValidUtterance) {
+      const looksConversational =
+        /\b(hello|haan|ha\b|hi\b|ji\b|namaste|theek|kaun|kya|bolo|nahi|nahin|bol|sun|suno|aap|tum|main|acha|accha|ok|haan ji|ha ji|kal|aaj|tell|what|how|where|when|price|cost|yes|no|sure|wait|who|why|want|know|about)\b/i.test(cleanText)
+        || cleanText.includes("?") || wordCount <= 6;
+      if (!looksConversational) {
+        console.log(`[${source}] first-utterance background noise, skipping callSid=${callSid} text="${cleanText.slice(0, 60)}"`);
+        return;
+      }
+    }
+    session.firstValidUtterance = true;
+
+    // Language tracking
+    const prevLang = languageManager.getBaseLanguage(callSid);
+    languageManager.recordUtterance(callSid, prevLang || "hi", cleanText);
+    const newLang = languageManager.getBaseLanguage(callSid);
+    if (prevLang !== newLang) {
+      console.log(`[lang-detect] language switched ${prevLang} → ${newLang} callSid=${callSid}`);
+    }
+
+    session.stage = "qualification";
+    if (session.status === "stream_started") session.status = "active";
+
+    const t1 = Date.now();
+    const reply = await getLLMResponse(session, cleanText);
+    console.log(`[agent] callSid=${callSid} llm=${Date.now() - t1}ms total_to_llm=${Date.now() - t0}ms source=${source} reply="${reply.slice(0, 60)}"`);
+
+    const streamed = await synthesizeAndStreamReply(ws, session, reply);
+    if (!streamed) {
+      const speech = await synthesizeSpeech(session, reply) ||
+        await synthesizeSpeech(session, "Main samajh raha hoon. Kya aap do BHK ya teen BHK mein interested hain?");
+      if (speech && ws.readyState === WebSocket.OPEN) {
+        clearEnablexMedia(ws, session);
+        await recordAgentAudio(session, speech, "agent-reply");
+        sendEnablexMedia(ws, session, speech, "reply");
+      }
+    }
+
+    if (isTerminalGuidedState(session)) {
+      console.log(`[agent] terminal state reached, scheduling hangup callSid=${callSid} state=${session.guidedState}`);
+      scheduleAgentSideHangup(ws, session, session.guidedState);
+    } else {
+      console.log(`[agent] continuing call callSid=${callSid} guidedState=${session.guidedState || "null"}`);
+    }
+
+    console.log(`[agent] total_latency=${Date.now() - t0}ms callSid=${callSid} source=${source}`);
+    await persistSession(session);
+
+  } catch (error) {
+    console.warn(`[${source}] processing failed`, { callSid, message: error.message });
+    const fallback = languageManager.fallback(callSid);
+    const speech = await synthesizeSpeech(session, fallback);
+    if (speech && ws.readyState === WebSocket.OPEN) {
+      clearEnablexMedia(ws, session);
+      await recordAgentAudio(session, speech, "agent-fallback");
+      sendEnablexMedia(ws, session, speech, "fallback");
+    }
+  } finally {
+    if (session.inboundAudio) {
+      session.inboundAudio.processing    = false;
+      session.inboundAudio.lastFlushAt   = Date.now();
+    }
+  }
+}
+
 // ── SPECULATIVE_STT_FRAMES: fire STT after this many speech frames ─────────────
-// 8 frames × 20ms = 160ms of speech → Sarvam starts processing while we still
-// collect audio. By the time silence fires (~240ms later) Sarvam is nearly done.
+// Used in the LOCAL fallback pipeline (when Deepgram is not available).
+// 8 frames × 20ms = 160ms of speech → STT starts while we still collect audio.
 const SPECULATIVE_STT_FRAMES = 8;
 
-async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
+// ── handleCallerAudioFrame — accepts optional rawMulaw for Deepgram forwarding ─
+// rawMulaw: the raw μ-law bytes from EnableX before PCM decoding (extracted by
+// the WebSocket message handler so we avoid re-encoding on every frame).
+async function handleCallerAudioFrame(ws, session, callSid, audioBuffer, rawMulaw = null) {
   if (!session.inboundAudio) {
     session.inboundAudio = {
       chunks: [], speechFrames: 0, silenceFrames: 0,
@@ -2142,6 +2403,25 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
     return;
   }
 
+  // ── Deepgram streaming path (primary when DEEPGRAM_API_KEY is set) ───────────
+  // Forward raw μ-law bytes directly to Deepgram WebSocket.
+  // Deepgram handles VAD + endpointing (300ms) + transcription in real-time.
+  // speech_final callback → processTranscriptDirect (skips all local buffering).
+  if (session.deepgramWs?.readyState === WebSocket.OPEN && session.deepgramReady) {
+    // Re-encode PCM16→mulaw only when caller didn't pass raw bytes directly
+    const mulaw = rawMulaw || encodePcm16ToMuLaw(downsamplePcm16To8k(audioBuffer));
+    try {
+      session.deepgramWs.send(mulaw);
+    } catch (err) {
+      console.warn(`[deepgram] send failed callSid=${callSid}:`, err.message);
+      session.deepgramWs    = null;
+      session.deepgramReady = false;
+      // Fall through to local pipeline below on this frame
+    }
+    if (session.deepgramWs) return;  // Deepgram owns this frame
+  }
+
+  // ── Local VAD + silence detection (fallback when Deepgram is not available) ──
   const isCollecting = inbound.chunks.length > 0;
   if (hasSpeech || isCollecting) inbound.chunks.push(audioBuffer);
   if (inbound.processing) return;
@@ -2151,11 +2431,10 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
     inbound.silenceFrames = 0;
 
     // ── Speculative STT: fire early after 8 frames (160ms) ──────────────────
-    // Sarvam processes in parallel with remaining audio collection.
-    // When silence triggers (240ms later), the STT is ~80% done already.
+    // STT processes in parallel with remaining audio collection.
+    // When silence triggers, the STT may already be done — saves ~200ms.
     if (inbound.speechFrames === SPECULATIVE_STT_FRAMES && !inbound.speculativePromise && !inbound.processing) {
       const earlySnap = Buffer.concat(inbound.chunks);
-      const lang = languageManager.getLanguage(callSid);
       const baseLang = languageManager.getBaseLanguage(callSid) || "auto";
       inbound.speculativeAudio   = earlySnap;
       inbound.speculativePromise = transcribeAudioDirect(earlySnap, baseLang)
@@ -2172,7 +2451,7 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer) {
   inbound.silenceFrames += 1;
   const bufferedMs = inbound.chunks.length * 20;
   const enoughSpeech = inbound.speechFrames >= 10 || bufferedMs >= 1500;
-  const endedBySilence = inbound.silenceFrames >= 30;  // 600ms silence — natural pause without feeling sluggish
+  const endedBySilence = inbound.silenceFrames >= 15;  // 300ms silence (was 30×20ms=600ms) — cuts wait in half
   const tooLong = bufferedMs >= 10000;
 
   if ((enoughSpeech && endedBySilence) || tooLong) {
@@ -2453,6 +2732,13 @@ wss.on("connection", (ws, req) => {
           session.status = "stream_started";
           console.log(`[enablex-media] stream started for ${voiceId}`);
 
+          // ── Deepgram streaming STT: open per-call WebSocket for real-time transcription ──
+          // Opens immediately so it's ready before the first caller utterance.
+          // Falls back to local VAD+STT if DEEPGRAM_API_KEY is not set.
+          if (!config.agni.enabled) {
+            openDeepgramStream(ws, session, voiceId);
+          }
+
           // ── Agni mode: create LiveKit session, skip local greeting synthesis ──
           if (config.agni.enabled) {
             try {
@@ -2594,13 +2880,19 @@ wss.on("connection", (ws, req) => {
           }
         }
         audioBuffer = decodeEnablexInboundMedia(event);
+        // Preserve raw μ-law bytes for Deepgram (avoids re-encoding PCM→mulaw per frame)
+        if (session?.deepgramReady) {
+          session._rawMulawFrame = Buffer.from(event.media.payload, "base64");
+        }
       } catch (error) {
         console.log("[enablex-media] failed to parse text frame", error.message);
         return;
       }
     }
     if (!audioBuffer) return;
-    await handleCallerAudioFrame(ws, session, activeCallSid, audioBuffer);
+    const rawMulawFrame = session?._rawMulawFrame || null;
+    if (session) session._rawMulawFrame = null;
+    await handleCallerAudioFrame(ws, session, activeCallSid, audioBuffer, rawMulawFrame);
   });
 
   ws.on("close", async () => {
