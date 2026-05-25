@@ -1086,11 +1086,20 @@ async function getLLMResponse(session, userText) {
   // ── Streaming SSE helper — collects all chunks into a full reply string ──────
   // stream:true delivers first bytes sooner (lower TTFT) even when we wait for the
   // full response. For 90-token replies this saves ~80-150ms vs stream:false.
+  //
+  // CRITICAL: TCP chunks can split mid-line. We carry a `remainder` string so that
+  // a JSON line broken across two chunks is re-assembled before parsing.
+  // Without this, split lines are silently skipped → garbled / truncated text.
   async function collectStreamingReply(axiosResponse) {
     let fullText = "";
+    let remainder = "";
     return new Promise((resolve, reject) => {
       axiosResponse.data.on("data", (chunk) => {
-        const lines = chunk.toString().split("\n");
+        // Prepend any incomplete line carried over from the previous chunk
+        const text = remainder + chunk.toString("utf8");
+        const lines = text.split("\n");
+        // The last element may be an incomplete line — carry it to the next chunk
+        remainder = lines.pop() || "";
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6).trim();
@@ -1101,7 +1110,19 @@ async function getLLMResponse(session, userText) {
           } catch {}
         }
       });
-      axiosResponse.data.on("end", () => resolve(fullText.trim()));
+      axiosResponse.data.on("end", () => {
+        // Flush any remaining incomplete line
+        if (remainder.startsWith("data: ")) {
+          const data = remainder.slice(6).trim();
+          if (data && data !== "[DONE]") {
+            try {
+              const parsed = JSON.parse(data);
+              fullText += parsed.choices?.[0]?.delta?.content || "";
+            } catch {}
+          }
+        }
+        resolve(fullText.trim());
+      });
       axiosResponse.data.on("error", reject);
     });
   }
@@ -1306,7 +1327,10 @@ function splitIntoSentences(text) {
 
 // Stream reply sentence-by-sentence — lead hears first sentence ~200ms sooner
 async function synthesizeAndStreamReply(ws, session, fullText) {
-  const sentences = splitIntoSentences(fullText);
+  // Enforce ONE sentence only — LLM sometimes ignores the prompt rule.
+  // Take only the first sentence chunk to keep TTS latency under 2s.
+  const allSentences = splitIntoSentences(fullText);
+  const sentences = allSentences.slice(0, 1);
   let firstSent = false;
   let lastKnownGeneration = session.telephony?.outGeneration || 0;
 
@@ -2096,6 +2120,12 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     const reply = await getLLMResponse(session, transcription.text);
     console.log(`[agent] callSid=${callSid} llm=${Date.now()-t1}ms total_to_llm=${Date.now()-t0}ms reply="${reply.slice(0,60)}"`);
 
+    // Release processing lock before TTS playback waits — allows barge-in
+    if (session.inboundAudio) {
+      session.inboundAudio.processing  = false;
+      session.inboundAudio.lastFlushAt = Date.now();
+    }
+
     // Stream sentence-by-sentence — lead hears first word sooner
     const streamed = await synthesizeAndStreamReply(ws, session, reply);
 
@@ -2336,6 +2366,14 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
     const t1 = Date.now();
     const reply = await getLLMResponse(session, cleanText);
     console.log(`[agent] callSid=${callSid} llm=${Date.now() - t1}ms total_to_llm=${Date.now() - t0}ms source=${source} reply="${reply.slice(0, 60)}"`);
+
+    // Release processing lock NOW — before TTS playback waits.
+    // This lets the user barge-in at any point during agent speech.
+    // The outGeneration guard in synthesizeAndStreamReply handles mid-stream interruption.
+    if (session.inboundAudio) {
+      session.inboundAudio.processing  = false;
+      session.inboundAudio.lastFlushAt = Date.now();
+    }
 
     const streamed = await synthesizeAndStreamReply(ws, session, reply);
     if (!streamed) {
