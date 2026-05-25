@@ -421,23 +421,20 @@ function buildSystemPrompt(lead, knowledgeContext, language, agentConfig = {}) {
   const agentName      = agentConfig.agentName      || "Priya";
   const wordCap        = parseInt(agentConfig.wordCap || "30", 10);
   const pitchTone      = agentConfig.pitchTone      || "balanced";       // aggressive | balanced | consultative
-  const langStrictness = agentConfig.langStrictness  || "pure-hindi";    // pure-hindi | hinglish | auto
+  const langStrictness = agentConfig.langStrictness  || "auto";          // auto | hinglish | pure-hindi
   const escalationLine = agentConfig.escalationLine  ||
     "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge.";
 
-  // ── Language instruction ───────────────────────────────────────────────────
-  let hindiExtra = "";
-  if (lang === "hi") {
-    if (langStrictness === "pure-hindi") {
-      hindiExtra = ` Use pure conversational Hindi words — avoid English words wherever a natural Hindi equivalent exists (e.g. "kimat" not "price", "jagah" not "location", "kamre" not "rooms", "suvidha" not "facility", "samay" not "time"). Write numbers and units in full words for TTS (e.g. "pachaas lakh rupaye", "sau square feet"). Do NOT write abbreviations like Rs, sq.ft, BHK — spell them out.`;
-    } else if (langStrictness === "hinglish") {
-      hindiExtra = ` Speak in natural Hinglish — Hindi sentences with English brand names, project names, and technical terms allowed (e.g. "price", "BHK", "EMI", "site visit" are fine). Keep it conversational and easy to understand.`;
-    }
-  }
-
-  const languageInstruction = langLabel && lang !== "en" && lang !== "auto"
-    ? `CRITICAL LANGUAGE RULE — THIS OVERRIDES EVERYTHING ELSE: The lead is speaking ${langLabel}. You MUST reply in ${langLabel} for EVERY single message — including greetings, goodbyes, closing lines, and follow-up questions. NEVER write even one word in English. If you reply in English for any reason, that is a critical failure.${hindiExtra}`
-    : "Mirror the lead's language exactly — if they speak Hindi, reply in Hindi; if English, reply in English.";
+  // ── Language instruction — fully adaptive, no language barrier ───────────
+  // ElevenLabs TTS speaks any language the LLM writes — no need to force Hindi.
+  const languageInstruction = `LANGUAGE RULE: Always mirror the language the lead is speaking.
+- If they speak Hindi → reply in Hindi (Devanagari script, natural conversational tone)
+- If they speak English → reply in English
+- If they speak Hinglish (mixed Hindi-English) → reply in Hinglish
+- If they speak Marathi, Tamil, Telugu, Punjabi, Bengali, Gujarati, or any other language → reply in that same language
+- NEVER force Hindi on someone who is not speaking Hindi
+- Numbers, prices, and project names can always be spoken naturally in the detected language
+- Keep responses SHORT — max ${wordCap} words — one clear point per reply`;
 
   // ── Sales pitch philosophy based on tone ─────────────────────────────────
   const pitchBlock = {
@@ -2175,8 +2172,10 @@ function openDeepgramStream(ws, session, callSid) {
   if (session.deepgramWs?.readyState === WebSocket.OPEN) return session.deepgramWs;
 
   const lang = languageManager.getBaseLanguage(callSid) || "hi";
-  // Normalize language code: Sarvam/ElevenLabs STT outputs "hin" but Deepgram needs "hi"
-  const dgLang = (lang === "hin" || lang === "auto" || !lang) ? "hi" : lang;
+  // Use Deepgram multi-language detection — supports Hindi, English, Marathi, Tamil, etc.
+  // "hi" forced only when explicitly set; otherwise use "multi" for auto-detection.
+  const forcedLang = process.env.DEEPGRAM_LANGUAGE || "";
+  const dgLang = forcedLang || "hi"; // default hi; set DEEPGRAM_LANGUAGE=multi in Railway for auto-detect
   const dgParams = new URLSearchParams({
     encoding:        "mulaw",
     sample_rate:     "8000",
