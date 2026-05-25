@@ -763,6 +763,9 @@ function buildRuleBasedReply(session, userText = "") {
   const isHindi = lang === "hi";
   const kbPriceSnippet = extractPriceFromKB(session.dynamicVariables?.knowledge_base || "");
 
+  // ── Helpers — MUST be defined before any usage ────────────────────────────
+  const T = (en, hi) => isHindi ? hi : en;
+
   // ── Universal farewell — end call immediately regardless of state ───────────
   // Catches: "thank you", "थैंक यू", "धन्यवाद", "bye", "chalo", etc.
   const universalFarewell = /\b(thank you|thanks|bye|goodbye|alvida|ok bye|ok thanks|chalo ab|ab chalta|achha theek|chalta hoon|chalti hoon|chalte hain)\b|थैंक\s*यू|धन्यवाद|शुक्रिया|अलविदा|बाय\b|चलो\s*अब|ठीक\s*है\s*चलते|चलते\s*हैं/.test(text);
@@ -785,9 +788,6 @@ function buildRuleBasedReply(session, userText = "") {
   // Negative — Latin + Devanagari
   const negativeIntent = /bye|not interested|stop|later|no\b|not now|busy|nahi\b|nahin\b|na\b|mat\b|baad mein|abhi nahi|नहीं|नही|ना\b|मत\b|बाद में|अभी नहीं|व्यस्त|बिज़ी/.test(text);
   const guidedState = session.guidedState || null;
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  const T = (en, hi) => isHindi ? hi : en;
 
   if (/price|cost|rate|budget|how much|pricing|daam|kimat|kitna|kitne|paisa|qeemat|रेट|दाम|कीमत|क़ीमत|कितना|कितने|पैसे|रुपए|रुपये|प्राइस|बजट/.test(text)) {
     if (kbPriceSnippet) {
@@ -1178,8 +1178,19 @@ async function getLLMResponse(session, userText) {
       return reply.replace(/OUTCOME:({.*})/s, "").trim();
     } catch (err) {
       const statusCode = err.response?.status;
-      const errBody = safeErrBody(err.response?.data);
-      console.warn(`[groq] failed (HTTP ${statusCode || "?"}) falling back to rule-based: ${err.message} — ${errBody}`);
+      const data = err.response?.data;
+      // Read actual error body from stream so we can diagnose 400/401/429 causes
+      let errBody = "{}";
+      if (data && typeof data.on === "function") {
+        try {
+          const chunks = [];
+          await new Promise((res) => { data.on("data", c => chunks.push(c)); data.on("end", res); data.on("error", res); });
+          errBody = Buffer.concat(chunks).toString().slice(0, 300);
+        } catch { errBody = "[stream-read-failed]"; }
+      } else {
+        errBody = safeErrBody(data);
+      }
+      console.warn(`[groq] failed (HTTP ${statusCode || "?"}) falling back: ${err.message} — ${errBody}`);
     }
   }
 
