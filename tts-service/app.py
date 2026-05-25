@@ -185,6 +185,37 @@ def _preprocess_tts_text(text: str, language: str) -> str:
     return text
 
 
+# ── Emotion → ElevenLabs voice_settings map ──────────────────────────────────
+# stability  : 0.0 = very expressive/varied  |  1.0 = monotone/consistent
+# style      : 0.0 = no exaggeration          |  1.0 = very exaggerated style
+# speed      : 0.75 = slow/thoughtful          |  1.25 = fast/energetic
+_EMOTION_VOICE_SETTINGS: dict[str, dict] = {
+    # Opening greeting — warm, friendly, inviting
+    "warm":         {"stability": 0.35, "style": 0.25, "speed": 0.95},
+    # Talking about features/amenities/offers — upbeat, enthusiastic
+    "excited":      {"stability": 0.20, "style": 0.50, "speed": 1.05},
+    # Handling price concerns — gentle, patient, reassuring
+    "empathetic":   {"stability": 0.60, "style": 0.10, "speed": 0.90},
+    # Booking site visit / scheduling — clear, confident, professional
+    "professional": {"stability": 0.70, "style": 0.05, "speed": 1.00},
+    # Default fallback
+    "neutral":      {"stability": 0.50, "style": 0.00, "speed": 1.00},
+}
+
+
+def _voice_settings_for_emotion(emotion: str | None) -> dict:
+    """Return ElevenLabs voice_settings merged from base env vars + emotion override."""
+    overrides = _EMOTION_VOICE_SETTINGS.get((emotion or "neutral").lower(),
+                                            _EMOTION_VOICE_SETTINGS["neutral"])
+    return {
+        "stability":        overrides["stability"],
+        "similarity_boost": ELEVENLABS_SIMILARITY_BOOST,   # always max voice clone fidelity
+        "style":            overrides["style"],
+        "use_speaker_boost": True,
+        "speed":            overrides["speed"],
+    }
+
+
 async def _elevenlabs_synthesize(request: SynthRequest):
     if not ELEVENLABS_API_KEY:
         raise HTTPException(status_code=500, detail="ELEVENLABS_API_KEY is not configured")
@@ -205,19 +236,17 @@ async def _elevenlabs_synthesize(request: SynthRequest):
     else:
         selected_voice = ELEVENLABS_VOICE_MAP.get(request.gender, ELEVENLABS_VOICE_MAP["female"])
 
-    logger.info(f"[elevenlabs-tts] voice={selected_voice} gender={request.gender} requested_id={voice_id!r}")
+    # Resolve emotion: use request.emotion if provided, otherwise map from text+context
+    emotion = request.emotion or map_emotion(request.text, request.context)
+    voice_settings = _voice_settings_for_emotion(emotion)
+    logger.info(f"[elevenlabs-tts] voice={selected_voice} gender={request.gender} emotion={emotion} "
+                f"stability={voice_settings['stability']} style={voice_settings['style']} speed={voice_settings['speed']}")
 
     text = request.text[:2500]
     payload = {
         "text": text,
         "model_id": ELEVENLABS_MODEL,
-        "voice_settings": {
-            "stability": ELEVENLABS_STABILITY,
-            "similarity_boost": ELEVENLABS_SIMILARITY_BOOST,
-            "style": ELEVENLABS_STYLE,
-            "use_speaker_boost": True,
-            "speed": ELEVENLABS_SPEED,
-        },
+        "voice_settings": voice_settings,
     }
     headers = {
         "xi-api-key": ELEVENLABS_API_KEY,
