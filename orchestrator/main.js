@@ -486,13 +486,14 @@ HOW TO HANDLE THE CONVERSATION:
 3. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual number/fact — never deflect.
 4. If genuinely not in KB (rare legal/structural detail): "${escalationLine}" — do NOT use this for simple affirmations.
 5. NEVER pitch site visit mid-answer — complete the full answer FIRST, then optionally add site visit as a separate short line.
-6. ⚠️ STRICT LENGTH — THIS IS MANDATORY: ONE sentence only. Maximum ${wordCap} words. If you write more than 1 sentence you have failed. No bullet points, no lists, no paragraphs.
+6. ⚠️ STRICT LENGTH — THIS IS MANDATORY: ONE sentence only. Maximum 10 words. Count your words — if more than 10 you MUST shorten before replying. No bullet points, no lists, no paragraphs.
 7. SIMPLE ACKNOWLEDGMENTS — "theek hai", "ok", "accha", "hmm", "haan" mean the lead heard you. Reply with a short follow-up question, NOT "koi pressure nahi" or a farewell.
 8. NEVER repeat your introduction after the first greeting.
 9. If asked if you are AI: say you are calling from the developer's sales team.
 10. NEVER say "Prop-hunt" as one word — always "Prop Hunt" (two words).
 11. QUALIFICATION GOAL: Before ending the call, note the lead's BHK preference, budget range, purpose (investment/self-use), and timeline.
-12. ⚠️ "HELLO?" / "ARE YOU THERE?" — When the lead says only "Hello?" or "Haan?", they are checking if you are still on the line. Do NOT say hello back. Give them ONE useful piece of project information: e.g., "Haan main hoon — Mahindra Citadel mein 2 BHK 1.2 crore se start hoti hai, interested hain?"
+12. ⚠️ "HELLO?" / "ARE YOU THERE?" — Lead is checking if you're on the line. Do NOT say hello. Give ONE short fact: e.g., "Haan hoon — 2 BHK 1.2 crore, interested?"
+13. ⚠️ BREVITY IS CRITICAL: This is a phone call. Hindi TTS is slow. Long responses = lead hangs up. Maximum 10 words every single turn, no exceptions.
 
 CONVERSATION STYLE: ${pitchTone === "aggressive" ? "Confident, urgent, driven — every turn moves toward a site visit booking." : pitchTone === "consultative" ? "Warm, patient, advisor-like — build trust first, never pressure." : "Warm, natural, and helpful — balance information with gentle sales momentum."}
 
@@ -1271,16 +1272,16 @@ async function getOpeningMessage(session) {
   const rawOpening = normalizeTtsText(interpolated);
   const opening = rawOpening
     ? (() => {
-        // Take first 2 sentences then hard-cap at 22 words to keep audio under 8s.
-        // ElevenLabs multilingual speaks at ~2.5 words/sec → 22 words ≈ 8.8s audio.
-        // Previous cap was 2 sentences with no word limit → 16s+ audio → user blocked.
-        const twoSentences = rawOpening.split(/(?<=[.!?।])\s+/).slice(0, 2).join(" ").trim();
-        return capReplyWords(twoSentences, 22);
+        // Take FIRST sentence only, cap at 10 words.
+        // ElevenLabs Hindi TTS: ~1.4 words/sec → 10 words ≈ 7s audio.
+        // Previous: 22-word cap → 15.9s audio (blocking lead for 16s!) → "Hello?" loop.
+        const firstSentence = rawOpening.split(/(?<=[.!?।])\s+/)[0].trim();
+        return capReplyWords(firstSentence, 10);
       })()
     : (() => {
         // Short hardcoded fallback — only used if opening line field is completely empty
-        const fallback = `Namaste ${leadName} ji! Main Priya bol rahi hoon Prop Hunt se — kya abhi baat kar sakte hain?`;
-        return capReplyWords(fallback, 22);
+        const fallback = `Namaste ${leadName} ji! Main Priya hoon Prop Hunt se.`;
+        return capReplyWords(fallback, 10);
       })();
 
   // Seed history so subsequent LLM turns have context of how the call started
@@ -1333,19 +1334,23 @@ function splitIntoSentences(text) {
   return merged.length ? merged : [text];
 }
 
-// Hard-cap reply to MAX_WORDS words to prevent 10-20 second TTS audio.
-// Called before splitting into sentences — ensures even a run-on LLM sentence is short.
-function capReplyWords(text, maxWords = 35) {
+// Hard-cap reply to MAX_WORDS words to prevent long TTS audio.
+// ElevenLabs Hindi TTS speaks at ~1.4 words/sec (NOT 2.5 — that's English).
+// 12 words × (1/1.4) ≈ 8.6s audio — acceptable for a phone turn.
+// Ends with "." so TTS reads it as a complete sentence, not mid-cut.
+function capReplyWords(text, maxWords = 12) {
   const words = text.trim().split(/\s+/);
   if (words.length <= maxWords) return text;
-  return words.slice(0, maxWords).join(" ") + "…";
+  // Strip trailing punctuation from the last kept word, then add period
+  const trimmed = words.slice(0, maxWords).join(" ").replace(/[,;—–\s]+$/, "");
+  return trimmed + ".";
 }
 
 // Stream reply sentence-by-sentence — lead hears first sentence ~200ms sooner
 async function synthesizeAndStreamReply(ws, session, fullText) {
-  // Hard word-cap before anything else — prevents 17-second audio chunks.
-  // 35 words ≈ 7-9 seconds audio at normal Hindi/English speech rate.
-  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "35", 10));
+  // Hard word-cap before anything else — prevents long audio chunks.
+  // ElevenLabs Hindi TTS: ~1.4 words/sec → 12 words ≈ 8.6s audio.
+  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "12", 10));
 
   // Enforce ONE sentence only — LLM sometimes ignores the prompt rule.
   // Take only the first sentence chunk to keep TTS latency under 2s.
