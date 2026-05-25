@@ -1126,7 +1126,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.OPENAI_MODEL || "gpt-4o-mini",
             messages,
             temperature: 0.3,
-            max_tokens: 90,  // 1-2 short sentences only
+            max_tokens: 65,  // 1 short sentence — keeps TTS fast
             stream: true,    // streaming: first bytes arrive faster, lower TTFT
           },
           {
@@ -1160,7 +1160,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
             messages,
             temperature: 0.2,
-            max_tokens: 120,
+            max_tokens: 65,  // ~1 short sentence — keeps TTS fast and responses concise
             stream: true,    // Groq streaming: even faster first-token delivery
           },
           {
@@ -2175,16 +2175,17 @@ function openDeepgramStream(ws, session, callSid) {
   if (session.deepgramWs?.readyState === WebSocket.OPEN) return session.deepgramWs;
 
   const lang = languageManager.getBaseLanguage(callSid) || "hi";
+  // Normalize language code: Sarvam/ElevenLabs STT outputs "hin" but Deepgram needs "hi"
+  const dgLang = (lang === "hin" || lang === "auto" || !lang) ? "hi" : lang;
   const dgParams = new URLSearchParams({
-    encoding:         "mulaw",
-    sample_rate:      "8000",
-    model:            process.env.DEEPGRAM_MODEL || "nova-2-general",
-    language:         lang === "auto" ? "hi" : lang,
-    endpointing:      process.env.DEEPGRAM_ENDPOINTING || "300",  // 300ms silence → speech_final
-    interim_results:  "false",   // skip partials — only act on finals
-    utterance_end_ms: "1000",    // force flush after 1s stale audio
-    smart_format:     "true",    // normalises numbers/punctuation
-    no_delay:         "true",    // publish results ASAP
+    encoding:        "mulaw",
+    sample_rate:     "8000",
+    model:           process.env.DEEPGRAM_MODEL || "nova-2-general",
+    language:        dgLang,
+    endpointing:     process.env.DEEPGRAM_ENDPOINTING || "300",  // 300ms silence → speech_final
+    interim_results: "false",   // skip partials — only act on finals
+    smart_format:    "true",    // normalises numbers/punctuation
+    // NOTE: no_delay and utterance_end_ms are NOT valid Deepgram params — omit to avoid HTTP 400
   });
 
   let dgWs;
