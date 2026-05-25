@@ -1078,6 +1078,15 @@ async function getLLMResponse(session, userText) {
   const currentTurn   = { role: "user", content: `[CURRENT — respond to this only]: ${userText}` };
   const messages = [{ role: "system", content: systemPrompt }, ...historyContext, currentTurn];
 
+  // ── Safe error body serializer — avoids circular JSON from stream responses ──
+  // When responseType:'stream', err.response?.data is an IncomingMessage (TLSSocket)
+  // which cannot be JSON.stringified. This helper detects streams and returns '[stream]'.
+  function safeErrBody(data) {
+    if (!data) return "{}";
+    if (typeof data === "object" && typeof data.on === "function") return "[stream]";
+    try { return JSON.stringify(data).slice(0, 200); } catch { return "[unstringifiable]"; }
+  }
+
   // ── Streaming SSE helper — collects all chunks into a full reply string ──────
   // stream:true delivers first bytes sooner (lower TTFT) even when we wait for the
   // full response. For 90-token replies this saves ~80-150ms vs stream:false.
@@ -1135,7 +1144,7 @@ async function getLLMResponse(session, userText) {
       return reply.replace(/OUTCOME:({.*})/s, "").trim();
     } catch (err) {
       const statusCode = err.response?.status;
-      const errBody = JSON.stringify(err.response?.data || {}).slice(0, 200);
+      const errBody = safeErrBody(err.response?.data);
       console.warn(`[openai] failed (HTTP ${statusCode || "?"}) falling back to Groq: ${err.message} — ${errBody}`);
     }
   }
@@ -1169,7 +1178,7 @@ async function getLLMResponse(session, userText) {
       return reply.replace(/OUTCOME:({.*})/s, "").trim();
     } catch (err) {
       const statusCode = err.response?.status;
-      const errBody = JSON.stringify(err.response?.data || {}).slice(0, 200);
+      const errBody = safeErrBody(err.response?.data);
       console.warn(`[groq] failed (HTTP ${statusCode || "?"}) falling back to rule-based: ${err.message} — ${errBody}`);
     }
   }
