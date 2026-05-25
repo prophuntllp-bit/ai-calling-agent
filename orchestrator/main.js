@@ -842,7 +842,16 @@ function buildRuleBasedReply(session, userText = "") {
 
   // ── awaiting_site_visit → respond to yes/no on site visit ─────────────────
   if (guidedState === "awaiting_site_visit") {
-    if (positiveIntent) {
+    // If the user is asking a question or requesting information → let LLM answer
+    // Don't treat informational requests like "bataiye/बताइए/kya hai/hospital/college" as "yes"
+    const isInfoRequest = /\b(bataiye|batao|bata|kya|kaise|kaisa|kaisi|kitna|kitne|kimat|price|cost|hospital|college|school|mall|metro|location|jagah|amenity|amenities|pool|gym|parking|floor|possession|ready|handover|loan|emi|bank|discount|offer)\b|बताइए|बताओ|क्या|कैसा|कितना|कितने|कीमत|हॉस्पिटल|कॉलेज|स्कूल|मेट्रो|लोकेशन|पार्किंग|पज़ेशन|लोन|ईएमआई|डिस्काउंट/i.test(text);
+    if (isInfoRequest) {
+      // User is asking a real question — don't push site visit, let LLM answer from KB
+      return null;
+    }
+    // Explicit yes/confirmation only — "haan", "yes", "bilkul", "theek hai", "ok" etc.
+    const explicitYes = /^(haan|ha\b|yes|ji\b|bilkul|theek|acha|accha|zaroor|sure|ok\b|okay|chalo|kar do|book karo|book kar|karo|kijiye|lelo|le lo|confirm|done)\b|^हाँ|^हां|^जी\b|^बिल्कुल|^ठीक|^अच्छा|^ज़रूर|^जरूर/i.test(text.trim());
+    if (explicitYes) {
       session.guidedState = "site_visit_confirmed";
       return T(
         `Wonderful! I have noted your site visit request for ${project}. Our sales team will call you within 24 hours to confirm the date and time. You will get to see the model apartment, views, and all amenities live. Thank you so much!`,
@@ -856,11 +865,8 @@ function buildRuleBasedReply(session, userText = "") {
         `Koi baat nahi. Kya kuch aur jaanna chahenge — amenities, jagah, possession date ya floor plan ke baare mein?`
       );
     }
-    // Repeated site visit question
-    return T(
-      `Should I book a site visit for you at ${project}? It's just 30 minutes and you can see the actual flats and amenities yourself.`,
-      `Kya main ${project} ke liye site visit book kar doon? Sirf 30 minute lagte hain aur aap actual flats aur amenities khud dekh sakte hain.`
-    );
+    // Anything else — let LLM continue the conversation naturally with KB context
+    return null;
   }
 
   // ── site_visit_confirmed → warm close ─────────────────────────────────────
@@ -2138,7 +2144,10 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
 // Set DEEPGRAM_API_KEY env var to enable. Falls back to local VAD+STT if unset.
 function openDeepgramStream(ws, session, callSid) {
   const dgKey = process.env.DEEPGRAM_API_KEY;
-  if (!dgKey) return null;
+  if (!dgKey) {
+    console.log(`[deepgram] DEEPGRAM_API_KEY not set — using local STT pipeline callSid=${callSid}`);
+    return null;
+  }
   if (session.deepgramWs?.readyState === WebSocket.OPEN) return session.deepgramWs;
 
   const lang = languageManager.getBaseLanguage(callSid) || "hi";
