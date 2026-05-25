@@ -492,6 +492,7 @@ HOW TO HANDLE THE CONVERSATION:
 9. If asked if you are AI: say you are calling from the developer's sales team.
 10. NEVER say "Prop-hunt" as one word — always "Prop Hunt" (two words).
 11. QUALIFICATION GOAL: Before ending the call, note the lead's BHK preference, budget range, purpose (investment/self-use), and timeline.
+12. ⚠️ "HELLO?" / "ARE YOU THERE?" — When the lead says only "Hello?" or "Haan?", they are checking if you are still on the line. Do NOT say hello back. Give them ONE useful piece of project information: e.g., "Haan main hoon — Mahindra Citadel mein 2 BHK 1.2 crore se start hoti hai, interested hain?"
 
 CONVERSATION STYLE: ${pitchTone === "aggressive" ? "Confident, urgent, driven — every turn moves toward a site visit booking." : pitchTone === "consultative" ? "Warm, patient, advisor-like — build trust first, never pressure." : "Warm, natural, and helpful — balance information with gentle sales momentum."}
 
@@ -1269,10 +1270,17 @@ async function getOpeningMessage(session) {
 
   const rawOpening = normalizeTtsText(interpolated);
   const opening = rawOpening
-    ? rawOpening.split(/(?<=[.!?।])\s+/).slice(0, 2).join(" ").trim()
+    ? (() => {
+        // Take first 2 sentences then hard-cap at 22 words to keep audio under 8s.
+        // ElevenLabs multilingual speaks at ~2.5 words/sec → 22 words ≈ 8.8s audio.
+        // Previous cap was 2 sentences with no word limit → 16s+ audio → user blocked.
+        const twoSentences = rawOpening.split(/(?<=[.!?।])\s+/).slice(0, 2).join(" ").trim();
+        return capReplyWords(twoSentences, 22);
+      })()
     : (() => {
         // Short hardcoded fallback — only used if opening line field is completely empty
-        return `Namaste ${leadName} ji! Main Priya bol rahi hoon Prop Hunt se. Aap ${projectName} ke baare mein interested hain — kya abhi baat kar sakte hain?`;
+        const fallback = `Namaste ${leadName} ji! Main Priya bol rahi hoon Prop Hunt se — kya abhi baat kar sakte hain?`;
+        return capReplyWords(fallback, 22);
       })();
 
   // Seed history so subsequent LLM turns have context of how the call started
@@ -1944,10 +1952,10 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
   session.telephony.outGeneration = generation;
   session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 600;  // +600ms — barge-in window
   session.telephony.echoSuppressionUntil  = Date.now() + playbackMs + 1100; // +1100ms — swallow echo after agent finishes
-  // Opening greeting is uninterruptible — protect it from barge-in so the lead
-  // hears the full greeting even if background noise triggers speech detection
+  // Opening greeting protection — cap at 9s max (opening audio is ≤8.8s after word cap fix).
+  // Old code: no cap → 16s audio → user blocked for 17s → 1011 Deepgram close.
   if (label && label.startsWith("opening-greeting")) {
-    session.telephony.openingProtectionUntil = Date.now() + playbackMs + 800;
+    session.telephony.openingProtectionUntil = Date.now() + Math.min(playbackMs, 9000) + 800;
   }
   if (session.inboundAudio && !session.inboundAudio.processing) {
     session.inboundAudio.chunks = [];
@@ -2428,6 +2436,25 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
       scheduleAgentSideHangup(ws, session, session.guidedState);
     } else {
       console.log(`[agent] continuing call callSid=${callSid} guidedState=${session.guidedState || "null"}`);
+
+      // Silence nudge — if lead doesn't respond within 12s, prompt them once.
+      // Prevents 30-second dead air where lead waits but doesn't know it's their turn.
+      const nudgeDelay = parseInt(process.env.SILENCE_NUDGE_MS || "12000", 10);
+      const nudgeAt = Date.now() + nudgeDelay;
+      session._lastTurnAt = Date.now();
+      setTimeout(async () => {
+        if (session.closed || session._lastTurnAt > nudgeAt - nudgeDelay || !ws || ws.readyState !== 1) return;
+        const lang = languageManager.getBaseLanguage(callSid) || "hi";
+        const nudgeText = lang === "hi"
+          ? "Aap wahan hain? Koi sawaal ho toh poochh sakte hain."
+          : "Are you there? Feel free to ask anything about the project.";
+        console.log(`[agent] silence-nudge callSid=${callSid}`);
+        const nudgeAudio = await synthesizeSpeech(session, nudgeText).catch(() => null);
+        if (nudgeAudio && ws.readyState === 1 && !session.closed) {
+          clearEnablexMedia(ws, session);
+          sendEnablexMedia(ws, session, nudgeAudio, "nudge");
+        }
+      }, nudgeDelay);
     }
 
     console.log(`[agent] total_latency=${Date.now() - t0}ms callSid=${callSid} source=${source}`);
