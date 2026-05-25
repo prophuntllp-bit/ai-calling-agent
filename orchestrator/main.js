@@ -1060,7 +1060,7 @@ async function getLLMResponse(session, userText) {
   const knowledgeContext = (
     session.dynamicVariables?.knowledge_base ||
     (await getKnowledgeContext(session.campaign?.project_id || session.lead.project_id, userText))
-  ).slice(0, 1500);  // 4000→1500: reduces input tokens by ~600, avoids Groq 429 rate limit
+  ).slice(0, 3500);  // 3500 chars — includes pricing section. (was 1500: pricing was cut off → agent said "not discussed")
 
   // Resolve language — prefer detected language over "auto" placeholder
   const resolvedLanguage = (language === "auto" || language === "auto-IN" || !language)
@@ -1325,11 +1325,23 @@ function splitIntoSentences(text) {
   return merged.length ? merged : [text];
 }
 
+// Hard-cap reply to MAX_WORDS words to prevent 10-20 second TTS audio.
+// Called before splitting into sentences — ensures even a run-on LLM sentence is short.
+function capReplyWords(text, maxWords = 35) {
+  const words = text.trim().split(/\s+/);
+  if (words.length <= maxWords) return text;
+  return words.slice(0, maxWords).join(" ") + "…";
+}
+
 // Stream reply sentence-by-sentence — lead hears first sentence ~200ms sooner
 async function synthesizeAndStreamReply(ws, session, fullText) {
+  // Hard word-cap before anything else — prevents 17-second audio chunks.
+  // 35 words ≈ 7-9 seconds audio at normal Hindi/English speech rate.
+  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "35", 10));
+
   // Enforce ONE sentence only — LLM sometimes ignores the prompt rule.
   // Take only the first sentence chunk to keep TTS latency under 2s.
-  const allSentences = splitIntoSentences(fullText);
+  const allSentences = splitIntoSentences(capped);
   const sentences = allSentences.slice(0, 1);
   let firstSent = false;
   let lastKnownGeneration = session.telephony?.outGeneration || 0;
@@ -1469,8 +1481,16 @@ async function synthesizeSpeech(session, text) {
 
 async function persistSession(session) {
   const serializable = { ...session, startedAt: session.startedAt, updatedAt: nowIso() };
+  // Remove non-serializable objects — WebSocket and timer have circular refs that break JSON.stringify
   delete serializable.timer;
-  await redis.set(`session:${session.callSid}`, JSON.stringify(serializable), "EX", Math.ceil(config.callTimeoutMs / 1000));
+  delete serializable.deepgramWs;      // WebSocket → TLSSocket → HTTPParser (circular)
+  delete serializable.inboundAudio;    // Buffers can be large — not needed in Redis
+  delete serializable.recordings;      // PCM buffer arrays — not needed in Redis
+  try {
+    await redis.set(`session:${session.callSid}`, JSON.stringify(serializable), "EX", Math.ceil(config.callTimeoutMs / 1000));
+  } catch (err) {
+    console.warn(`[persist] JSON.stringify failed callSid=${session.callSid}: ${err.message}`);
+  }
 }
 
 function safeRecordingId(callSid) {
@@ -1917,11 +1937,13 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
     return false;
   }
   const chunks = toEnablexMuLawChunks(audioBuffer);
-  const playbackMs = chunks.length * 20;
+  // Each 320-byte chunk = 40ms of 8kHz mulaw audio. Was incorrectly * 20 → echo suppression
+  // window ended at half the actual audio duration → Deepgram picked up agent's own voice.
+  const playbackMs = chunks.length * 40;
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
-  session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 600;  // +600ms — barge-in window: agent still "speaking" for detection purposes
-  session.telephony.echoSuppressionUntil  = Date.now() + playbackMs + 1100; // +1100ms — extra 500ms dead zone after agent window to swallow phone echo
+  session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 600;  // +600ms — barge-in window
+  session.telephony.echoSuppressionUntil  = Date.now() + playbackMs + 1100; // +1100ms — swallow echo after agent finishes
   // Opening greeting is uninterruptible — protect it from barge-in so the lead
   // hears the full greeting even if background noise triggers speech detection
   if (label && label.startsWith("opening-greeting")) {
@@ -2250,7 +2272,18 @@ function openDeepgramStream(ws, session, callSid) {
     // Without this, partial phrases like "How would you" reach the LLM and get wrong answers.
     if (!msg.speech_final) return;
 
-    console.log(`[deepgram] speech_final callSid=${callSid} text="${transcript.slice(0, 80)}" conf=${(alt?.confidence || 0).toFixed(2)}`);
+    const conf = alt?.confidence || 0;
+    console.log(`[deepgram] speech_final callSid=${callSid} text="${transcript.slice(0, 80)}" conf=${conf.toFixed(2)}`);
+
+    // Confidence threshold — skip garbled/background-noise transcripts.
+    // Phone calls in India have background noise; conf < 0.5 is almost always wrong.
+    // "Havillin." (0.47), "What is it?" (0.41) are real examples of noise being sent to LLM.
+    const MIN_CONF = parseFloat(process.env.DEEPGRAM_MIN_CONF || "0.5");
+    if (conf < MIN_CONF && transcript.split(/\s+/).length <= 3) {
+      // Only reject SHORT low-confidence results — long utterances are more reliable even at lower conf
+      console.log(`[deepgram] low-confidence short transcript skipped callSid=${callSid} conf=${conf.toFixed(2)} text="${transcript}"`);
+      return;
+    }
 
     // Clear local audio buffer — Deepgram owns this utterance
     const inbound = session.inboundAudio;
