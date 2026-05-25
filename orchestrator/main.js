@@ -2094,8 +2094,12 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
 
     if (!streamed) {
       // Fallback: synthesize full reply in one shot
+      const isHindi = (languageManager.getBaseLanguage(callSid) || "hi") === "hi";
+      const ttsLastResort = isHindi
+        ? "Ek second, main aapki baat samajh rahi hoon."
+        : "One moment, I am processing your query.";
       const speech = await synthesizeSpeech(session, reply) ||
-        await synthesizeSpeech(session, "Main samajh raha hoon. Kya aap do BHK ya teen BHK mein interested hain?");
+        await synthesizeSpeech(session, ttsLastResort);
       if (speech && ws.readyState === WebSocket.OPEN) {
         clearEnablexMedia(ws, session);
         await recordAgentAudio(session, speech, "agent-reply");
@@ -2313,8 +2317,12 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
 
     const streamed = await synthesizeAndStreamReply(ws, session, reply);
     if (!streamed) {
+      const isHindiDg = (languageManager.getBaseLanguage(callSid) || "hi") === "hi";
+      const ttsLastResortDg = isHindiDg
+        ? "Ek second, main aapki baat samajh rahi hoon."
+        : "One moment, I am processing your query.";
       const speech = await synthesizeSpeech(session, reply) ||
-        await synthesizeSpeech(session, "Main samajh raha hoon. Kya aap do BHK ya teen BHK mein interested hain?");
+        await synthesizeSpeech(session, ttsLastResortDg);
       if (speech && ws.readyState === WebSocket.OPEN) {
         clearEnablexMedia(ws, session);
         await recordAgentAudio(session, speech, "agent-reply");
