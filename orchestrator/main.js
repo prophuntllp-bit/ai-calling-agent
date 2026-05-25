@@ -1060,7 +1060,7 @@ async function getLLMResponse(session, userText) {
   const knowledgeContext = (
     session.dynamicVariables?.knowledge_base ||
     (await getKnowledgeContext(session.campaign?.project_id || session.lead.project_id, userText))
-  ).slice(0, 4000);
+  ).slice(0, 1500);  // 4000→1500: reduces input tokens by ~600, avoids Groq 429 rate limit
 
   // Resolve language — prefer detected language over "auto" placeholder
   const resolvedLanguage = (language === "auto" || language === "auto-IN" || !language)
@@ -1069,9 +1069,8 @@ async function getLLMResponse(session, userText) {
 
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {});
 
-  // Send full history for context, but label the LAST user message clearly so the
-  // LLM doesn't replay answers to earlier questions inside the current reply.
-  const historyContext = session.history.slice(0, -1);  // everything except the current message
+  // Send only last 3 turns (6 messages) — enough context, far fewer tokens
+  const historyContext = session.history.slice(-6).slice(0, -1);
   const currentTurn   = { role: "user", content: `[CURRENT — respond to this only]: ${userText}` };
   const messages = [{ role: "system", content: systemPrompt }, ...historyContext, currentTurn];
 
@@ -2244,6 +2243,16 @@ function openDeepgramStream(ws, session, callSid) {
     console.log(`[deepgram] closed callSid=${callSid} code=${code}`);
     session.deepgramWs    = null;
     session.deepgramReady = false;
+    // Auto-reconnect on server-side errors (1011=internal error, 1006=abnormal close)
+    // Don't reconnect if the call is already closed or we intentionally closed (1000)
+    if (!session.closed && code !== 1000 && code !== 1001) {
+      setTimeout(() => {
+        if (!session.closed && !session.deepgramWs) {
+          console.log(`[deepgram] reconnecting after code=${code} callSid=${callSid}`);
+          openDeepgramStream(ws, session, callSid);
+        }
+      }, 1000);
+    }
   });
 
   session.deepgramWs    = dgWs;
