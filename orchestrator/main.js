@@ -482,12 +482,12 @@ STEP 3 — INVITE SITE VISIT: After BHK + price covered, offer: "Ek baar persona
 
 HOW TO HANDLE THE CONVERSATION:
 1. ONLY ANSWER THE LATEST MESSAGE — history is context only. Respond ONLY to the lead's current message. NEVER re-answer earlier questions.
-2. LISTEN FIRST — answer the lead's question completely BEFORE asking your own.
-3. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual answer — never deflect.
+2. LISTEN FIRST — answer the lead's EXACT question using KB. If they ask about 2 BHK, answer about 2 BHK. If they ask about location, answer about location. Do NOT change the topic.
+3. Use the PROJECT KNOWLEDGE BASE to answer ANY question about price, size, location, amenities, RERA, possession date, floor plans, parking, etc. Give the actual number/fact — never deflect.
 4. If genuinely not in KB (rare legal/structural detail): "${escalationLine}" — do NOT use this for simple affirmations.
-5. NEVER pitch site visit mid-answer — complete the full answer FIRST, then add the invitation as a separate sentence.
-6. STRICT LENGTH: 1-2 sentences max. Hard cap of ${wordCap} words. No long speeches, no lists.
-7. ANTI-REPETITION: NEVER open with "Dhanyawaad / Shukriya / Aapka shukriya" mid-call. If lead says "theek hai / ok / accha" — ask a follow-up, don't thank them.
+5. NEVER pitch site visit mid-answer — complete the full answer FIRST, then optionally add site visit as a separate short line.
+6. ⚠️ STRICT LENGTH — THIS IS MANDATORY: ONE sentence only. Maximum ${wordCap} words. If you write more than 1 sentence you have failed. No bullet points, no lists, no paragraphs.
+7. SIMPLE ACKNOWLEDGMENTS — "theek hai", "ok", "accha", "hmm", "haan" mean the lead heard you. Reply with a short follow-up question, NOT "koi pressure nahi" or a farewell.
 8. NEVER repeat your introduction after the first greeting.
 9. If asked if you are AI: say you are calling from the developer's sales team.
 10. NEVER say "Prop-hunt" as one word — always "Prop Hunt" (two words).
@@ -2215,8 +2215,10 @@ function openDeepgramStream(ws, session, callSid) {
     const transcript = (alt?.transcript || "").trim();
     if (!transcript) return;
 
-    // Only act on speech_final — the definitive end-of-utterance transcript
-    if (!msg.speech_final && !msg.is_final) return;
+    // ONLY act on speech_final — the definitive end-of-utterance signal after silence.
+    // is_final fires on committed audio chunks (can be partial mid-sentence) — skip those.
+    // Without this, partial phrases like "How would you" reach the LLM and get wrong answers.
+    if (!msg.speech_final) return;
 
     console.log(`[deepgram] speech_final callSid=${callSid} text="${transcript.slice(0, 80)}" conf=${(alt?.confidence || 0).toFixed(2)}`);
 
