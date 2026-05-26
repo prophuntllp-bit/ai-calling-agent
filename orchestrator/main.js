@@ -2082,6 +2082,243 @@ function clearEnablexMedia(ws, session) {
   );
 }
 
+// ── Streaming mulaw queue ─────────────────────────────────────────────────────
+// Accepts raw 16-bit PCM at 8kHz from ElevenLabs (pcm_8000) and sends to EnableX
+// in 160-byte mulaw chunks at 40ms intervals. Audio starts on first appendPcm16() call.
+function createMulawStreamQueue(ws, session, label = "stream") {
+  const voiceId  = session.telephony?.voiceId  || session.callSid;
+  const streamId = session.telephony?.streamId;
+  if (!streamId || !voiceId || ws.readyState !== WebSocket.OPEN) return null;
+  if (session.telephony?.provider !== "enablex") return null;
+
+  const generation = (session.telephony.outGeneration || 0) + 1;
+  session.telephony.outGeneration = generation;
+  session.telephony.agentSpeakingUntil   = Date.now() + 30000; // tentative — updated on close()
+  session.telephony.echoSuppressionUntil = Date.now() + 30000;
+  if (session.inboundAudio) { session.inboundAudio.chunks = []; session.inboundAudio.speechFrames = 0; }
+
+  const queue   = [];
+  let totalSent = 0;
+  let running   = false;
+  let isClosed  = false;
+  let leftover  = Buffer.alloc(0); // partial PCM16 bytes waiting for a full pair
+
+  function stopped() {
+    return session.telephony.outGeneration !== generation || ws.readyState !== WebSocket.OPEN;
+  }
+
+  function tick() {
+    if (stopped() || queue.length === 0) { running = false; return; }
+    const mulaw = queue.shift();
+    totalSent++;
+    const seq = (session.telephony.outSeq || 0) + 1;
+    session.telephony.outSeq = seq;
+    try {
+      ws.send(JSON.stringify({
+        event: "media", stream_id: streamId, voice_id: voiceId,
+        media: { timestamp: totalSent * 40, payload: mulaw.toString("base64"), sequence_number: String(seq) },
+      }));
+    } catch {}
+    setTimeout(tick, 40);
+  }
+
+  function kickSender() {
+    if (!running && queue.length > 0 && !stopped()) { running = true; tick(); }
+  }
+
+  console.log(`[mulaw-queue] open label=${label} callSid=${session.callSid}`);
+
+  return {
+    // ElevenLabs sends raw 16-bit LE PCM at 8kHz — convert to mulaw and queue
+    appendPcm16(pcmBytes) {
+      if (isClosed || stopped()) return;
+      const buf  = Buffer.concat([leftover, pcmBytes]);
+      const step = 320; // 160 samples × 2 bytes → one 160-byte mulaw chunk (40ms)
+      let   i    = 0;
+      for (; i + step <= buf.length; i += step) {
+        queue.push(encodePcm16ToMuLaw(buf.slice(i, i + step)));
+      }
+      leftover = buf.slice(i);
+      kickSender();
+    },
+
+    close() {
+      // Flush any remaining partial PCM
+      if (leftover.length > 0) {
+        const padded = Buffer.concat([leftover, Buffer.alloc(320 - leftover.length)]);
+        queue.push(encodePcm16ToMuLaw(padded));
+        leftover = Buffer.alloc(0);
+        kickSender();
+      }
+      isClosed = true;
+      const pendingMs = (totalSent + queue.length) * 40;
+      session.telephony.lastPlaybackMs       = pendingMs;
+      session.telephony.agentSpeakingUntil   = Date.now() + pendingMs + 600;
+      session.telephony.echoSuppressionUntil = Date.now() + pendingMs + 1100;
+      console.log(`[mulaw-queue] closed totalSent=${totalSent} pending=${queue.length} playbackMs=${pendingMs} callSid=${session.callSid}`);
+    },
+
+    isStopped() { return stopped(); },
+  };
+}
+
+// ── True streaming pipeline: LLM tokens → ElevenLabs WS → mulaw queue ────────
+// TTFA: ~500-800ms  vs  5-6s with sequential HTTP pipeline.
+// Falls back to standard pipeline on any error (caller detects null return).
+//
+// Returns: reply string when done   |   null when caller should use standard pipeline
+async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio } = {}) {
+  const elevenKey = process.env.ELEVENLABS_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const ttsProvider = process.env.TTS_PROVIDER || "elevenlabs";
+  if (!elevenKey || !openaiKey || ttsProvider !== "elevenlabs") return null;
+
+  const callSid  = session.callSid;
+  const maxWords = parseInt(process.env.TTS_MAX_WORDS || "12", 10);
+  const model    = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
+
+  // Voice ID — same resolution as TTS service
+  const gender = session.campaign?.voice_gender || session.lead?.voice_gender || "female";
+  const voiceId = gender === "male"
+    ? (process.env.ELEVENLABS_VOICE_MALE   || "pNInz6obpgDQGcFmaJgB")
+    : (process.env.ELEVENLABS_VOICE_FEMALE || process.env.ELEVENLABS_VOICE_ID || "zmh5xhBvMzqR4ZlXgcgL");
+
+  // Emotion → voice settings
+  const emotion = emotionFromContext(userText, { stage: session.stage });
+  const ESETTINGS = {
+    warm:         { stability: 0.35, similarity_boost: 1.0, style: 0.25, speed: 0.95 },
+    excited:      { stability: 0.20, similarity_boost: 1.0, style: 0.50, speed: 1.05 },
+    empathetic:   { stability: 0.60, similarity_boost: 1.0, style: 0.10, speed: 0.90 },
+    professional: { stability: 0.70, similarity_boost: 1.0, style: 0.05, speed: 1.00 },
+    neutral:      { stability: 0.50, similarity_boost: 1.0, style: 0.00, speed: 1.00 },
+  };
+  const voiceSettings = ESETTINGS[emotion] || ESETTINGS.neutral;
+
+  // Build LLM messages — mirror getLLMResponse logic exactly
+  const language = languageManager.getLanguage(callSid);
+  // Push user turn to history (same as getLLMResponse line 1059)
+  session.history.push({ role: "user", content: userText });
+  session.history = session.history.slice(-10);
+  const knowledgeContext = (
+    session.dynamicVariables?.knowledge_base ||
+    (await getKnowledgeContext(session.campaign?.project_id || session.lead.project_id, userText).catch(() => ""))
+  ).slice(0, 3500);
+  const resolvedLanguage = (language === "auto" || language === "auto-IN" || !language)
+    ? (languageManager.getBaseLanguage(callSid) || "hi")
+    : language;
+  const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {});
+  const historyContext = session.history.slice(-6).slice(0, -1);
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...historyContext,
+    { role: "user",   content: `[CURRENT — respond to this only]: ${userText}` },
+  ];
+
+  const t0 = Date.now();
+  let fullText    = "";
+  let wordCount   = 0;
+  let doneSending = false;
+  let mulawQueue  = null;
+  let audioFired  = false;
+
+  function fireOnFirstAudio() {
+    if (!audioFired) { audioFired = true; if (onFirstAudio) onFirstAudio(); }
+  }
+
+  return new Promise((resolve, reject) => {
+    const wsUrl =
+      `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input` +
+      `?model_id=${model}&output_format=pcm_8000&optimize_streaming_latency=4`;
+    let elevenWs;
+    try { elevenWs = new WebSocket(wsUrl, { headers: { "xi-api-key": elevenKey } }); }
+    catch (e) { return reject(e); }
+
+    elevenWs.on("open", async () => {
+      // BOS — voice settings sent before any text
+      elevenWs.send(JSON.stringify({
+        text: " ",
+        voice_settings: voiceSettings,
+        generation_config: { chunk_length_schedule: [120, 160, 250, 290] },
+      }));
+
+      // LLM streaming — tokens pipe directly into ElevenLabs WS
+      try {
+        const llmResp = await axios.post(
+          "https://api.openai.com/v1/chat/completions",
+          { model: process.env.OPENAI_MODEL || "gpt-4o", messages, temperature: 0.4, max_tokens: 65, stream: true },
+          { headers: { Authorization: `Bearer ${openaiKey}` }, responseType: "stream", timeout: 8000 }
+        );
+        let remainder = "";
+        llmResp.data.on("data", (chunk) => {
+          if (doneSending) return;
+          const text  = remainder + chunk.toString("utf8");
+          const lines = text.split("\n");
+          remainder   = lines.pop() || "";
+          let batch   = "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const d = line.slice(6).trim();
+            if (d === "[DONE]") {
+              doneSending = true;
+              if (batch) elevenWs.send(JSON.stringify({ text: batch }));
+              elevenWs.send(JSON.stringify({ text: "" }));
+              return;
+            }
+            try { const tok = JSON.parse(d).choices?.[0]?.delta?.content || ""; fullText += tok; batch += tok; wordCount = fullText.trim().split(/\s+/).length; } catch {}
+          }
+          if (!batch || doneSending) return;
+          if (wordCount >= maxWords) {
+            doneSending = true;
+            elevenWs.send(JSON.stringify({ text: batch }));
+            elevenWs.send(JSON.stringify({ text: "" }));   // word cap — EOS
+          } else {
+            elevenWs.send(JSON.stringify({ text: batch, try_trigger_generation: wordCount >= 5 }));
+          }
+        });
+        llmResp.data.on("end", () => { if (!doneSending) { doneSending = true; elevenWs.send(JSON.stringify({ text: "" })); } });
+        llmResp.data.on("error", (e) => { console.warn(`[eleven-stream] llm err callSid=${callSid}: ${e.message}`); elevenWs.close(); });
+      } catch (e) { console.warn(`[eleven-stream] llm start err callSid=${callSid}: ${e.message}`); elevenWs.close(); reject(e); }
+    });
+
+    elevenWs.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.audio) {
+          const pcm = Buffer.from(msg.audio, "base64");
+          if (!mulawQueue) {
+            mulawQueue = createMulawStreamQueue(ws, session, "eleven-stream");
+            if (mulawQueue) clearEnablexMedia(ws, session);
+            console.log(`[eleven-stream] TTFA=${Date.now() - t0}ms callSid=${callSid}`);
+            fireOnFirstAudio();
+          }
+          if (mulawQueue && !mulawQueue.isStopped()) mulawQueue.appendPcm16(pcm);
+        }
+        if (msg.isFinal) elevenWs.close();
+      } catch {}
+    });
+
+    elevenWs.on("close", () => {
+      if (mulawQueue) mulawQueue.close();
+      fireOnFirstAudio(); // ensure lock released even if no audio arrived
+      const reply = fullText.trim();
+      const clean = reply.replace(/OUTCOME:({.*})/s, "").trim();
+      // History and OUTCOME are managed by caller (getLLMResponse already pushed user msg)
+      // Push assistant reply here since we bypassed getLLMResponse
+      session.history.push({ role: "assistant", content: reply });
+      const m = reply.match(/OUTCOME:({.*})/s);
+      if (m) { try { session.outcome = JSON.parse(m[1]); } catch {} }
+      console.log(`[eleven-stream] done TTFA=${Date.now()-t0}ms reply="${clean.slice(0,60)}" callSid=${callSid}`);
+      resolve(clean);
+    });
+
+    elevenWs.on("error", (e) => {
+      console.warn(`[eleven-stream] ws error callSid=${callSid}: ${e.message}`);
+      fireOnFirstAudio();
+      reject(e);
+    });
+  });
+}
+
 async function processCallerUtterance(ws, session, callSid, reason = "utterance") {
   const inbound = session.inboundAudio;
   if (!inbound || inbound.processing || !inbound.chunks.length || session.telephony?.hangupScheduled) return;
@@ -2435,29 +2672,57 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
     if (session.status === "stream_started") session.status = "active";
 
     const t1 = Date.now();
-    const reply = await getLLMResponse(session, cleanText);
-    console.log(`[agent] callSid=${callSid} llm=${Date.now() - t1}ms total_to_llm=${Date.now() - t0}ms source=${source} reply="${reply.slice(0, 60)}"`);
 
-    // Release processing lock NOW — before TTS playback waits.
-    // This lets the user barge-in at any point during agent speech.
-    // The outGeneration guard in synthesizeAndStreamReply handles mid-stream interruption.
-    if (session.inboundAudio) {
-      session.inboundAudio.processing  = false;
-      session.inboundAudio.lastFlushAt = Date.now();
+    // ── Try ElevenLabs streaming pipeline first (LLM tokens → TTS → audio in ~500ms) ──
+    // Falls back to sequential pipeline on any error.
+    let reply = "";
+    let usedStreaming = false;
+
+    function releaseLock() {
+      if (session.inboundAudio) {
+        session.inboundAudio.processing  = false;
+        session.inboundAudio.lastFlushAt = Date.now();
+      }
     }
 
-    const streamed = await synthesizeAndStreamReply(ws, session, reply);
-    if (!streamed) {
-      const isHindiDg = (languageManager.getBaseLanguage(callSid) || "hi") === "hi";
-      const ttsLastResortDg = isHindiDg
-        ? "Ek second, main aapki baat samajh rahi hoon."
-        : "One moment, I am processing your query.";
-      const speech = await synthesizeSpeech(session, reply) ||
-        await synthesizeSpeech(session, ttsLastResortDg);
-      if (speech && ws.readyState === WebSocket.OPEN) {
-        clearEnablexMedia(ws, session);
-        await recordAgentAudio(session, speech, "agent-reply");
-        sendEnablexMedia(ws, session, speech, "reply");
+    try {
+      const streamResult = await streamingLLMWithElevenLabs(ws, session, cleanText, {
+        onFirstAudio: releaseLock,
+      });
+      if (streamResult !== null) {
+        // Streaming handled LLM + TTS + history push — done
+        reply = streamResult;
+        usedStreaming = true;
+        console.log(`[agent] streaming callSid=${callSid} total=${Date.now()-t0}ms reply="${reply.slice(0,60)}"`);
+      }
+      // streamResult === null means streaming not configured → no history push happened
+    } catch (err) {
+      // Streaming was attempted (history push already happened) but failed partway.
+      // Roll back the user history push so getLLMResponse doesn't double-push.
+      const last = session.history[session.history.length - 1];
+      if (last?.role === "user" && last.content === cleanText) session.history.pop();
+      console.warn(`[eleven-stream] fallback to HTTP pipeline callSid=${callSid}: ${err.message}`);
+    }
+
+    if (!usedStreaming) {
+      // Standard sequential pipeline (fallback / non-ElevenLabs TTS)
+      reply = await getLLMResponse(session, cleanText);
+      console.log(`[agent] callSid=${callSid} llm=${Date.now()-t1}ms total=${Date.now()-t0}ms reply="${reply.slice(0,60)}"`);
+      releaseLock(); // release before TTS so barge-in works during playback
+
+      const streamed = await synthesizeAndStreamReply(ws, session, reply);
+      if (!streamed) {
+        const isHindiDg = (languageManager.getBaseLanguage(callSid) || "hi") === "hi";
+        const ttsLastResortDg = isHindiDg
+          ? "Ek second, main aapki baat samajh rahi hoon."
+          : "One moment, I am processing your query.";
+        const speech = await synthesizeSpeech(session, reply) ||
+          await synthesizeSpeech(session, ttsLastResortDg);
+        if (speech && ws.readyState === WebSocket.OPEN) {
+          clearEnablexMedia(ws, session);
+          await recordAgentAudio(session, speech, "agent-reply");
+          sendEnablexMedia(ws, session, speech, "reply");
+        }
       }
     }
 
