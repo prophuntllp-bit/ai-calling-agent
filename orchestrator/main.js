@@ -2136,10 +2136,17 @@ function createMulawStreamQueue(ws, session, label = "stream") {
     try {
       ws.send(JSON.stringify({
         event: "media", stream_id: streamId, voice_id: voiceId,
-        media: { timestamp: totalSent * 40, payload: mulaw.toString("base64"), sequence_number: String(seq) },
+        media: {
+          seq,
+          timestamp: Date.now(),
+          format: { encoding: "ulaw", sample_rate: 8000, channels: 1 },
+          payload: mulaw.toString("base64"),
+        },
       }));
     } catch {}
-    setTimeout(tick, 40);
+    // 20ms interval = 160 bytes / 20ms = 8000 bytes/sec = correct G.711 8kHz rate.
+    // 40ms was half the bitrate → buffer underruns at EnableX → crackling audio.
+    setTimeout(tick, 20);
   }
 
   function kickSender() {
@@ -2173,6 +2180,9 @@ function createMulawStreamQueue(ws, session, label = "stream") {
         kickSender();
       }
       isClosed = true;
+      // playbackMs uses * 40 (same as sendEnablexMedia) — 2x safety margin over actual
+      // audio duration (chunks * 20ms) for echo suppression. Prevents Deepgram picking
+      // up agent echo before the far-end speaker is truly done playing.
       const pendingMs = (totalSent + queue.length) * 40;
       session.telephony.lastPlaybackMs       = pendingMs;
       session.telephony.agentSpeakingUntil   = Date.now() + pendingMs + 600;
