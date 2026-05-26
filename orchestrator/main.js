@@ -2103,8 +2103,8 @@ function clearEnablexMedia(ws, session) {
 }
 
 // ── Streaming mulaw queue ─────────────────────────────────────────────────────
-// Accepts raw 16-bit PCM at 8kHz from ElevenLabs (pcm_8000) and sends to EnableX
-// in 160-byte mulaw chunks at 40ms intervals. Audio starts on first appendPcm16() call.
+// Accepts raw G.711 μ-law bytes at 8kHz from ElevenLabs (ulaw_8000) and sends
+// to EnableX in 160-byte chunks at 40ms intervals. No conversion needed.
 function createMulawStreamQueue(ws, session, label = "stream") {
   const voiceId  = session.telephony?.voiceId  || session.callSid;
   const streamId = session.telephony?.streamId;
@@ -2149,24 +2149,26 @@ function createMulawStreamQueue(ws, session, label = "stream") {
   console.log(`[mulaw-queue] open label=${label} callSid=${session.callSid}`);
 
   return {
-    // ElevenLabs sends raw 16-bit LE PCM at 8kHz — convert to mulaw and queue
-    appendPcm16(pcmBytes) {
+    // ElevenLabs sends raw ulaw_8000 bytes (G.711 μ-law, 8kHz, 1 byte/sample).
+    // No conversion needed — split into 160-byte chunks (20ms each) and queue.
+    // Chunks are sent every 40ms → EnableX receives at correct telephony bitrate.
+    appendUlaw(ulawBytes) {
       if (isClosed || stopped()) return;
-      const buf  = Buffer.concat([leftover, pcmBytes]);
-      const step = 320; // 160 samples × 2 bytes → one 160-byte mulaw chunk (40ms)
+      const buf  = Buffer.concat([leftover, ulawBytes]);
+      const step = 160; // 160 bytes = 160 samples = 20ms of 8kHz ulaw per chunk
       let   i    = 0;
       for (; i + step <= buf.length; i += step) {
-        queue.push(encodePcm16ToMuLaw(buf.slice(i, i + step)));
+        queue.push(buf.slice(i, i + step));
       }
       leftover = buf.slice(i);
       kickSender();
     },
 
     close() {
-      // Flush any remaining partial PCM
+      // Flush any remaining partial ulaw bytes (pad to 160)
       if (leftover.length > 0) {
-        const padded = Buffer.concat([leftover, Buffer.alloc(320 - leftover.length)]);
-        queue.push(encodePcm16ToMuLaw(padded));
+        const padded = Buffer.concat([leftover, Buffer.alloc(160 - (leftover.length % 160))]);
+        queue.push(padded);
         leftover = Buffer.alloc(0);
         kickSender();
       }
@@ -2252,7 +2254,10 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   return new Promise((resolve, reject) => {
     const wsUrl =
       `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input` +
-      `?model_id=${model}&output_format=pcm_8000&optimize_streaming_latency=4`;
+      // ulaw_8000 = G.711 μ-law at 8kHz — directly compatible with EnableX, no conversion needed.
+      // pcm_8000 is NOT supported by ElevenLabs WebSocket streaming (stream-input endpoint)
+      // and silently falls back to MP3 → treating MP3 bytes as PCM → crackling/garbage audio.
+      `?model_id=${model}&output_format=ulaw_8000&optimize_streaming_latency=4`;
     let elevenWs;
     try { elevenWs = new WebSocket(wsUrl, { headers: { "xi-api-key": elevenKey } }); }
     catch (e) { return reject(e); }
@@ -2310,7 +2315,8 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       try {
         const msg = JSON.parse(raw.toString());
         if (msg.audio) {
-          const pcm = Buffer.from(msg.audio, "base64");
+          // ElevenLabs sends ulaw_8000: raw G.711 μ-law bytes, ready for EnableX
+          const ulaw = Buffer.from(msg.audio, "base64");
           if (!mulawQueue) {
             // CRITICAL ORDER: clearEnablexMedia FIRST (increments outGeneration to N+1, sends
             // clear_media to EnableX), THEN createMulawStreamQueue (increments to N+2, captures N+2).
@@ -2320,7 +2326,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
             console.log(`[eleven-stream] TTFA=${Date.now() - t0}ms callSid=${callSid}`);
             fireOnFirstAudio();
           }
-          if (mulawQueue && !mulawQueue.isStopped()) mulawQueue.appendPcm16(pcm);
+          if (mulawQueue && !mulawQueue.isStopped()) mulawQueue.appendUlaw(ulaw);
         }
         if (msg.isFinal) elevenWs.close();
       } catch {}
