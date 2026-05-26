@@ -2194,7 +2194,11 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   if (!elevenKey || !openaiKey || ttsProvider !== "elevenlabs") return null;
 
   const callSid  = session.callSid;
-  const maxWords = parseInt(process.env.TTS_MAX_WORDS || "12", 10);
+  // Hard cap for ElevenLabs streaming — Hindi TTS is ~1.4 words/sec, 15 words ≈ 10s audio.
+  // agentConfig.wordCap may be much larger (e.g. 55 set in dashboard); we apply the
+  // minimum of the two so the system prompt and the audio cap agree.
+  const agentWordCap = parseInt(session.agentConfig?.wordCap || "99", 10);
+  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "15", 10));
   const model    = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
 
   // Voice ID — same resolution as TTS service
@@ -2258,7 +2262,9 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       elevenWs.send(JSON.stringify({
         text: " ",
         voice_settings: voiceSettings,
-        generation_config: { chunk_length_schedule: [120, 160, 250, 290] },
+        // Small first chunk (50 chars ≈ 12 Hindi words) → ElevenLabs starts generating
+        // before we finish sending — shaves ~400ms off TTFA on short responses.
+        generation_config: { chunk_length_schedule: [50, 100, 150, 250] },
       }));
 
       // LLM streaming — tokens pipe directly into ElevenLabs WS
@@ -2306,8 +2312,11 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
         if (msg.audio) {
           const pcm = Buffer.from(msg.audio, "base64");
           if (!mulawQueue) {
+            // CRITICAL ORDER: clearEnablexMedia FIRST (increments outGeneration to N+1, sends
+            // clear_media to EnableX), THEN createMulawStreamQueue (increments to N+2, captures N+2).
+            // Reversed order causes stopped()=true immediately → totalSent=0 (no audio plays).
+            clearEnablexMedia(ws, session);
             mulawQueue = createMulawStreamQueue(ws, session, "eleven-stream");
-            if (mulawQueue) clearEnablexMedia(ws, session);
             console.log(`[eleven-stream] TTFA=${Date.now() - t0}ms callSid=${callSid}`);
             fireOnFirstAudio();
           }
@@ -2571,12 +2580,15 @@ function openDeepgramStream(ws, session, callSid) {
     console.log(`[deepgram] speech_final callSid=${callSid} text="${transcript.slice(0, 80)}" conf=${conf.toFixed(2)}`);
 
     // Confidence threshold — skip garbled/background-noise transcripts.
-    // Phone calls in India have background noise; conf < 0.5 is almost always wrong.
-    // "Havillin." (0.47), "What is it?" (0.41) are real examples of noise being sent to LLM.
-    const MIN_CONF = parseFloat(process.env.DEEPGRAM_MIN_CONF || "0.5");
-    if (conf < MIN_CONF && transcript.split(/\s+/).length <= 3) {
-      // Only reject SHORT low-confidence results — long utterances are more reliable even at lower conf
-      console.log(`[deepgram] low-confidence short transcript skipped callSid=${callSid} conf=${conf.toFixed(2)} text="${transcript}"`);
+    // Phone calls in India have high background noise; conf < 0.5 is almost always wrong.
+    // Two-tier filter:
+    //   • Any conf < 0.45 → reject (catches language-switching hallucinations like Spanish at 0.40)
+    //   • conf 0.45-0.60 → reject only if short (≤5 words) — longer real speech is more reliable
+    const MIN_CONF     = parseFloat(process.env.DEEPGRAM_MIN_CONF || "0.45");
+    const MIN_CONF_ANY = 0.45; // absolute floor — reject regardless of length
+    const words = transcript.split(/\s+/).length;
+    if (conf < MIN_CONF_ANY || (conf < 0.60 && words <= 5)) {
+      console.log(`[deepgram] low-confidence transcript skipped callSid=${callSid} conf=${conf.toFixed(2)} words=${words} text="${transcript}"`);
       return;
     }
 
