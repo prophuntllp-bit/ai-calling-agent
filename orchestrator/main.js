@@ -1317,16 +1317,17 @@ async function getOpeningMessage(session) {
   const rawOpening = normalizeTtsText(interpolated);
   const opening = rawOpening
     ? (() => {
-        // Take FIRST sentence only, cap at 10 words.
-        // ElevenLabs Hindi TTS: ~1.4 words/sec → 10 words ≈ 7s audio.
-        // Previous: 22-word cap → 15.9s audio (blocking lead for 16s!) → "Hello?" loop.
-        const firstSentence = rawOpening.split(/(?<=[.!?।])\s+/)[0].trim();
-        return capReplyWords(firstSentence, 10);
+        // Allow up to 2 sentences, cap at 20 words.
+        // ElevenLabs Hindi TTS: ~4 words/sec → 20 words ≈ 5s audio — well within 9s opening cap.
+        // Single-sentence cap at 10 was cutting user's 2-sentence template in half.
+        const sentences = rawOpening.split(/(?<=[.!?।])\s+/);
+        const twoSentences = sentences.slice(0, 2).join(" ").trim();
+        return capReplyWords(twoSentences, 20);
       })()
     : (() => {
         // Short hardcoded fallback — only used if opening line field is completely empty
         const fallback = `Namaste ${leadName} ji! Main Priya hoon Prop Hunt se.`;
-        return capReplyWords(fallback, 10);
+        return capReplyWords(fallback, 20);
       })();
 
   // Seed history so subsequent LLM turns have context of how the call started
@@ -1995,9 +1996,9 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
     return false;
   }
   const chunks = toEnablexMuLawChunks(audioBuffer);
-  // Each 320-byte chunk = 40ms of 8kHz mulaw audio. Was incorrectly * 20 → echo suppression
-  // window ended at half the actual audio duration → Deepgram picked up agent's own voice.
-  const playbackMs = chunks.length * 40;
+  // Each chunk = 160 bytes = 20ms of 8kHz ulaw audio (8000 samples/sec × 1 byte/sample × 0.02s).
+  // * 40 was written when chunks were 320 bytes — now chunks are 160 bytes, so * 20 is correct.
+  const playbackMs = chunks.length * 20;
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
   session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 600;  // +600ms — barge-in window
@@ -2157,8 +2158,8 @@ function createMulawStreamQueue(ws, session, label = "stream") {
 
   return {
     // ElevenLabs sends raw ulaw_8000 bytes (G.711 μ-law, 8kHz, 1 byte/sample).
-    // No conversion needed — split into 160-byte chunks (20ms each) and queue.
-    // Chunks are sent every 40ms → EnableX receives at correct telephony bitrate.
+    // No conversion needed — split into 160-byte chunks (20ms each at 8kHz ulaw) and queue.
+    // Chunks are sent every 20ms → EnableX receives at correct telephony bitrate (8000 bytes/sec).
     appendUlaw(ulawBytes) {
       if (isClosed || stopped()) return;
       const buf  = Buffer.concat([leftover, ulawBytes]);
@@ -2180,10 +2181,9 @@ function createMulawStreamQueue(ws, session, label = "stream") {
         kickSender();
       }
       isClosed = true;
-      // playbackMs uses * 40 (same as sendEnablexMedia) — 2x safety margin over actual
-      // audio duration (chunks * 20ms) for echo suppression. Prevents Deepgram picking
-      // up agent echo before the far-end speaker is truly done playing.
-      const pendingMs = (totalSent + queue.length) * 40;
+      // Each chunk = 160 bytes = 20ms at 8kHz ulaw. * 20 gives the true audio duration.
+      // +600ms / +1100ms margins on agentSpeakingUntil / echoSuppressionUntil handle jitter.
+      const pendingMs = (totalSent + queue.length) * 20;
       session.telephony.lastPlaybackMs       = pendingMs;
       session.telephony.agentSpeakingUntil   = Date.now() + pendingMs + 600;
       session.telephony.echoSuppressionUntil = Date.now() + pendingMs + 1100;
@@ -2861,9 +2861,10 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer, rawMula
   if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
     if (hasSpeech) {
       inbound.bargeinFrames = (inbound.bargeinFrames || 0) + 1;
-      if (inbound.bargeinFrames >= 6) {
-        // 6 consecutive frames = 120ms of sustained speech — real human voice.
-        // Phone echo and room noise rarely sustain 120ms; genuine barge-in does.
+      if (inbound.bargeinFrames >= 10) {
+        // 10 consecutive frames = 200ms of sustained speech — real human voice.
+        // Raised from 6 (120ms) to reduce false barge-ins from brief sounds/echo.
+        // Genuine speech sustains easily; clicks/echo/noise rarely hit 200ms.
         clearEnablexMedia(ws, session);
         session.telephony.agentSpeakingUntil   = 0;
         session.telephony.echoSuppressionUntil = 0; // user is actually speaking — lift echo suppression too
