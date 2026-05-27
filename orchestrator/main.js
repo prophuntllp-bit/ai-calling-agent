@@ -2596,14 +2596,18 @@ function openDeepgramStream(ws, session, callSid) {
     console.log(`[deepgram] speech_final callSid=${callSid} text="${transcript.slice(0, 80)}" conf=${conf.toFixed(2)}`);
 
     // Confidence threshold — skip garbled/background-noise transcripts.
-    // Phone calls in India have high background noise; conf < 0.5 is almost always wrong.
-    // Two-tier filter:
-    //   • Any conf < 0.45 → reject (catches language-switching hallucinations like Spanish at 0.40)
-    //   • conf 0.45-0.60 → reject only if short (≤5 words) — longer real speech is more reliable
-    const MIN_CONF     = parseFloat(process.env.DEEPGRAM_MIN_CONF || "0.45");
-    const MIN_CONF_ANY = 0.45; // absolute floor — reject regardless of length
+    // Phone calls in India have high background noise; low-conf short phrases are almost always noise.
+    // Three-tier filter:
+    //   • Any conf < 0.45 → reject always (language-switching hallucinations, e.g. Spanish at 0.40)
+    //   • conf < 0.70 AND ≤3 words → reject  ("Media half food.", "Abi" echoes, random clicks)
+    //   • conf < 0.60 AND ≤5 words → reject  (short ambiguous fragments)
+    const MIN_CONF_ANY = parseFloat(process.env.DEEPGRAM_MIN_CONF || "0.45");
     const words = transcript.split(/\s+/).length;
-    if (conf < MIN_CONF_ANY || (conf < 0.60 && words <= 5)) {
+    if (
+      conf < MIN_CONF_ANY ||
+      (conf < 0.70 && words <= 3) ||
+      (conf < 0.60 && words <= 5)
+    ) {
       console.log(`[deepgram] low-confidence transcript skipped callSid=${callSid} conf=${conf.toFixed(2)} words=${words} text="${transcript}"`);
       return;
     }
