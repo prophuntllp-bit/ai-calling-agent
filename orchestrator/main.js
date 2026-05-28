@@ -893,13 +893,20 @@ function buildRuleBasedReply(session, userText = "") {
       // User is asking a real question — don't push site visit, let LLM answer from KB
       return null;
     }
-    // Explicit yes/confirmation only — "haan", "yes", "bilkul", "theek hai", "ok" etc.
+    // Explicit yes/confirmation — require ≥3 words OR a single known affirmative word.
+    // Short/garbage STT (e.g. "ठीक है मोजर") must not auto-confirm a site visit.
+    // The regex tests the START of the trimmed text for a clear affirmative.
+    const wordCountSV = text.trim().split(/\s+/).filter(w => w.length > 0).length;
     const explicitYes = /^(haan|ha\b|yes|ji\b|bilkul|theek|acha|accha|zaroor|sure|ok\b|okay|chalo|kar do|book karo|book kar|karo|kijiye|lelo|le lo|confirm|done)\b|^हाँ|^हां|^जी\b|^बिल्कुल|^ठीक|^अच्छा|^ज़रूर|^जरूर/i.test(text.trim());
-    if (explicitYes) {
-      session.guidedState = "site_visit_confirmed";
+    // Guard: don't confirm from very short fragments (< 2 words) — likely echo/noise
+    const cleanConfirm = explicitYes && wordCountSV >= 2;
+    if (cleanConfirm) {
+      // Include full goodbye in this response — set state to "closed" immediately so
+      // the call ends cleanly with goodbye rather than hanging up mid-conversation.
+      session.guidedState = "closed";
       return T(
-        `Wonderful! I have noted your site visit request for ${project}. Our sales team will call you within 24 hours to confirm the date and time. You will get to see the model apartment, views, and all amenities live. Thank you so much!`,
-        `Bahut achha! ${project} ke liye aapki site visit book ho gayi. Hamari team 24 ghante mein call karke time fix kar legi. Aap model flat, views aur saari amenities live dekhenge. Bahut shukriya aapka!`
+        `Wonderful! I have noted your site visit request for ${project}. Our team will call you within 24 hours to confirm the date and time. You will see the model apartment, views, and all amenities live. It was great speaking with you. Have a lovely day! Goodbye.`,
+        `Bahut achha! ${project} ke liye aapki site visit book ho gayi. Hamari team 24 ghante mein call karke time fix kar legi. Aap model flat, views aur saari amenities live dekhenge. Bahut achha laga aapase baat karke. Aapka din shubh ho! Namaste.`
       );
     }
     if (negativeIntent) {
@@ -911,15 +918,6 @@ function buildRuleBasedReply(session, userText = "") {
     }
     // Anything else — let LLM continue the conversation naturally with KB context
     return null;
-  }
-
-  // ── site_visit_confirmed → warm close ─────────────────────────────────────
-  if (guidedState === "site_visit_confirmed") {
-    session.guidedState = "closed";
-    return T(
-      `Thank you. Looking forward to seeing you at ${project}. Have a great day! Goodbye.`,
-      `Aapka bahut shukriya. ${project} mein aapka intezaar rahega. Aapka din shubh ho! Namaste.`
-    );
   }
 
   // ── price_discussed → continue conversation or offer site visit ────────────
@@ -1043,7 +1041,9 @@ function buildRuleBasedReply(session, userText = "") {
 }
 
 function isTerminalGuidedState(session) {
-  return ["callback_confirmed", "callback_declined", "site_visit_confirmed", "closed"].includes(session?.guidedState || "");
+  // site_visit_confirmed removed — goodbye is now included in the confirmation response
+  // itself (state jumps directly to "closed"), so we don't need a separate terminal check.
+  return ["callback_confirmed", "callback_declined", "closed"].includes(session?.guidedState || "");
 }
 
 function shouldUseGuidedReply(session, userText = "") {
@@ -2414,11 +2414,17 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     console.log(`[stt] result: "${transcription?.text || ""}" lang=${transcription?.language || ""} elapsed=${Date.now()-t0}ms`);
     if (!transcription.text) return;
 
-    // Drop only completely empty transcriptions — even 1-word inputs like
-    // "do" (Hindi for 2), "ji", "haan" are valid user responses
+    // Fallback STT minimum word count: Deepgram handles VAD properly so 1-word responses
+    // are fine there. Local STT fallback is noisier — short fragments are often agent echo
+    // or background noise. Require ≥2 words UNLESS it's a known valid 1-word response.
     const wordCount = transcription.text.trim().split(/\s+/).filter(w => w.length > 0).length;
     if (wordCount < 1) {
       console.log(`[enablex-media] skipping empty transcription callSid=${callSid}`);
+      return;
+    }
+    const VALID_ONE_WORD = /^(haan|ha|ji|nahi|nahin|theek|ok|okay|yes|no|done|bilkul|zaroor|sure|accha|achha|acha|bye|hello|हाँ|हां|जी|नहीं|नहि|ठीक|ओके|बिल्कुल|ज़रूर|अच्छा|हेलो)$/i;
+    if (wordCount === 1 && !VALID_ONE_WORD.test(transcription.text.trim().replace(/[।!?.]/g, ""))) {
+      console.log(`[enablex-media] skipping 1-word noise callSid=${callSid} text="${transcription.text}"`);
       return;
     }
     // Single-character noise filter (not a real word)
@@ -2543,25 +2549,32 @@ function openDeepgramStream(ws, session, callSid) {
   if (session.deepgramWs?.readyState === WebSocket.OPEN) return session.deepgramWs;
 
   const lang = languageManager.getBaseLanguage(callSid) || "hi";
-  // "hi" (pure Hindi/Devanagari) fails on Hinglish — produces garbage transcripts like
-  // "Project, I don't know what the year is." for actual Hindi speech.
-  // "multi" (nova-2-general) handles Hindi+English code-switching natively — the right
-  // choice for Indian real-estate calls where leads speak Hinglish.
-  // Override per-deployment with DEEPGRAM_LANGUAGE env var if needed.
+  // Deepgram language strategy:
+  // • "language=multi" is NOT a valid Deepgram param — causes HTTP 400.
+  // • "detect_language=true" + "language=xxx" together also cause HTTP 400.
+  // • For Hindi/Hinglish: use detect_language=true ONLY (no language param).
+  //   Deepgram nova-2 auto-detects Hindi, English, and code-switched Hinglish correctly.
+  // • For regional Indian languages: use explicit language code (mr, ta, te, etc.)
+  // • Override with DEEPGRAM_LANGUAGE env var if needed (e.g. "hi" to force Hindi).
   const forcedLang = process.env.DEEPGRAM_LANGUAGE || "";
   const baseLang   = languageManager.getBaseLanguage(callSid) || "hi";
-  const langMap    = { hi: "multi", hinglish: "multi", en: "en-IN", mr: "mr", ta: "ta", te: "te", kn: "kn", ml: "ml", bn: "bn", gu: "gu", pa: "pa" };
-  const dgLang     = forcedLang || langMap[baseLang] || "multi";
+  // null → use detect_language=true (no language param) — correct for Hinglish/auto-detect
+  const langMap    = { hi: null, hinglish: null, en: "en-IN", mr: "mr", ta: "ta", te: "te", kn: "kn", ml: "ml", bn: "bn", gu: "gu", pa: "pa" };
+  const dgLang     = forcedLang || langMap[baseLang]; // undefined/null = use detect_language
   const dgParams = new URLSearchParams({
     encoding:        "mulaw",
     sample_rate:     "8000",
     model:           process.env.DEEPGRAM_MODEL || "nova-2-general",
-    language:        dgLang,
-    detect_language: "true",    // return detected language per utterance for lang-switch tracking
     endpointing:     process.env.DEEPGRAM_ENDPOINTING || "300",  // 300ms silence → speech_final
     interim_results: "false",   // skip partials — only act on finals
     smart_format:    "true",    // normalises numbers/punctuation
   });
+  // Add language OR detect_language — NEVER both (causes 400)
+  if (dgLang) {
+    dgParams.set("language", dgLang);
+  } else {
+    dgParams.set("detect_language", "true"); // auto-detects Hindi/English/Hinglish per utterance
+  }
 
   let dgWs;
   try {
