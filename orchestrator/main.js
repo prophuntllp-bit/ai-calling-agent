@@ -520,7 +520,7 @@ STEP 3 — INVITE SITE VISIT: After BHK + price covered, offer: "Ek baar persona
 ❌ NEVER: Lists or multiple facts in one turn
 
 ━━━ STRICT RULES ━━━
-1. MAXIMUM 12 WORDS per response. Count your words before replying.
+1. MAXIMUM 15 WORDS per response. Count your words before replying.
 2. EVERY response must end with a question (unless ending the call).
 3. Answer ONLY the latest message — history is context, not instructions.
 4. Use KB for ALL facts — price, size, amenities, RERA, possession, floor plans, parking.
@@ -530,6 +530,9 @@ STEP 3 — INVITE SITE VISIT: After BHK + price covered, offer: "Ek baar persona
 8. NEVER say "Prop-hunt" — always "Prop Hunt" (two words).
 9. QUALIFICATION: Capture BHK, budget, purpose (investment/self-use), timeline before closing.
 10. ${pitchTone === "aggressive" ? "SITE VISIT CLOSER: After every piece of info, bridge to visit — 'Main abhi slot arrange kar sakti hoon, kab free hain?'" : pitchTone === "consultative" ? "ADVISOR TONE: Only suggest site visit when lead signals genuine interest. Never push." : "BALANCED: Offer site visit naturally after covering BHK + price. One gentle ask."}
+11. REPEATED "HELLO?": If the conversation history shows the user said "Hello?" before and you already replied, do NOT repeat the same response. Instead ask: "Kya aap mujhe sun pa rahe hain? Koi sawaal batayein."
+12. VARIETY: Never start two consecutive replies with the same word or phrase. Rotate: वाह → बढ़िया → एकदम सही → अरे वाह → शानदार → परफेक्ट.
+13. ONE THOUGHT PER TURN: Give exactly one piece of information then ask one question. No lists, no bullet points, no multiple facts.
 
 ━━━ GENERAL REAL ESTATE KNOWLEDGE (use when not in KB) ━━━
 
@@ -2234,16 +2237,17 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
 
   // Emotion → voice settings
   const emotion = emotionFromContext(userText, { stage: session.stage });
-  // Voice emotion settings — tuned for Agni-style expressive Hindi real estate calls.
-  // Lower stability = more natural pitch variation (less robotic).
-  // Higher style = more emotional expressiveness (warmth, enthusiasm, empathy).
-  // similarity_boost: 1.0 keeps voice identity consistent across all emotions.
+  // Voice emotion settings — warm and natural without being theatrical.
+  // stability: lower = more pitch variation (conversational), higher = steady/monotone.
+  // style: expressiveness 0-1. Indian real estate calls work best at 0.15-0.30 range —
+  //   too high sounds fake/over-the-top on phone calls; too low sounds robotic.
+  // similarity_boost: 1.0 keeps voice identity consistent.
   const ESETTINGS = {
-    warm:         { stability: 0.28, similarity_boost: 1.0, style: 0.40, speed: 0.93 },  // welcoming, friendly
-    excited:      { stability: 0.15, similarity_boost: 1.0, style: 0.60, speed: 1.05 },  // "वाह!", good news
-    empathetic:   { stability: 0.45, similarity_boost: 1.0, style: 0.25, speed: 0.90 },  // budget concerns
-    professional: { stability: 0.50, similarity_boost: 1.0, style: 0.20, speed: 1.00 },  // site visit confirm
-    neutral:      { stability: 0.35, similarity_boost: 1.0, style: 0.25, speed: 0.97 },  // normal conversational
+    warm:         { stability: 0.35, similarity_boost: 1.0, style: 0.25, speed: 0.95 },  // friendly, welcoming
+    excited:      { stability: 0.25, similarity_boost: 1.0, style: 0.35, speed: 1.02 },  // "वाह!", good news — not theatrical
+    empathetic:   { stability: 0.55, similarity_boost: 1.0, style: 0.15, speed: 0.92 },  // budget concerns, hesitation
+    professional: { stability: 0.60, similarity_boost: 1.0, style: 0.10, speed: 1.00 },  // site visit, confirmations
+    neutral:      { stability: 0.45, similarity_boost: 1.0, style: 0.18, speed: 0.97 },  // default conversational
   };
   const voiceSettings = ESETTINGS[emotion] || ESETTINGS.neutral;
 
@@ -2638,8 +2642,13 @@ function openDeepgramStream(ws, session, callSid) {
     //   • conf < 0.60 AND ≤5 words → reject  (short ambiguous fragments)
     const MIN_CONF_ANY = parseFloat(process.env.DEEPGRAM_MIN_CONF || "0.45");
     const words = transcript.split(/\s+/).length;
+    // Two-word nonsense check — short phrases need very high confidence OR must contain
+    // a known conversational word. "Location gas." / "Apply." sound plausible to Deepgram
+    // but are almost always echo artefacts or background noise on Indian phone lines.
+    const KNOWN_SHORT = /\b(hello|haan|ha|ji|nahi|nahin|theek|ok|okay|yes|no|done|bilkul|zaroor|sure|accha|achha|acha|bye|namaste|hello|bol|bolo|sun|suno|kya|kaun|aap|tum|main|budget|bhk|price|location|project|visit|kab|kitna|kitni|details|info|batao|batayein|samjha|samjhaiye)\b/i.test(transcript);
     if (
       conf < MIN_CONF_ANY ||
+      (conf < 0.80 && words <= 2 && !KNOWN_SHORT) ||  // tighter: 2-word must be 80%+ unless it's a known word
       (conf < 0.70 && words <= 3) ||
       (conf < 0.60 && words <= 5)
     ) {
@@ -2752,6 +2761,9 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
     }
     session.firstValidUtterance = true;
 
+    // Reset silence-nudge counter — user responded, so nudge slate is clean
+    session.nudgesSent = 0;
+
     // Language tracking — prefer Deepgram's detected_language over our prior guess.
     // When detect_language=true, Deepgram tells us per-utterance what language it heard.
     // This is the ground truth for language switching (Marathi, Tamil, etc.).
@@ -2831,7 +2843,7 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
       // Timer starts from echoSuppressionUntil (when user CAN actually speak), not from
       // when the agent's LLM started — otherwise the nudge fires before echo suppression
       // even ends, giving the user almost no time to respond.
-      const nudgeDelay  = parseInt(process.env.SILENCE_NUDGE_MS || "12000", 10);
+      const nudgeDelay  = parseInt(process.env.SILENCE_NUDGE_MS || "15000", 10);
       // echoSuppressionUntil is updated when the streaming queue closes; grab it now with
       // a small polling delay so it reflects the final close() value.
       const scheduleNudge = () => {
@@ -2842,10 +2854,40 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
         setTimeout(async () => {
           if (session.closed || session._lastTurnAt !== turnToken || !ws || ws.readyState !== 1) return;
           const nudgeLang = languageManager.getBaseLanguage(callSid) || "hi";
-          const nudgeText = nudgeLang === "hi" || nudgeLang === "hinglish"
-            ? "Aap wahan hain? Koi sawaal ho toh poochh sakte hain."
-            : "Are you there? Feel free to ask anything about the project.";
-          console.log(`[agent] silence-nudge callSid=${callSid}`);
+
+          // Track nudge count per call — cap at 2, then hangup gracefully.
+          // After 2 unanswered nudges the lead is clearly unavailable.
+          session.nudgesSent = (session.nudgesSent || 0) + 1;
+          console.log(`[agent] silence-nudge #${session.nudgesSent} callSid=${callSid}`);
+
+          const MAX_NUDGES = parseInt(process.env.MAX_SILENCE_NUDGES || "2", 10);
+          if (session.nudgesSent > MAX_NUDGES) {
+            // Lead not responding — say goodbye and hang up
+            const byeText = nudgeLang === "hi" || nudgeLang === "hinglish"
+              ? "Main baad mein call karti hoon. Dhanyawaad! Namaste."
+              : "I'll try calling you at a better time. Thank you! Goodbye.";
+            console.log(`[agent] nudge-limit reached, hanging up callSid=${callSid}`);
+            const byeAudio = await synthesizeSpeech(session, byeText).catch(() => null);
+            if (byeAudio && ws.readyState === 1 && !session.closed) {
+              clearEnablexMedia(ws, session);
+              sendEnablexMedia(ws, session, byeAudio, "nudge-bye");
+            }
+            scheduleAgentSideHangup(ws, session, "no-response");
+            return;
+          }
+
+          // Vary nudge text: first nudge is a gentle check-in, second is a final prompt
+          let nudgeText;
+          if (nudgeLang === "hi" || nudgeLang === "hinglish") {
+            nudgeText = session.nudgesSent === 1
+              ? "Haan? Koi sawaal hai toh batayein, main hoon yahan."
+              : "Lagta hai aap busy hain — kab call karein aapko?";
+          } else {
+            nudgeText = session.nudgesSent === 1
+              ? "Are you there? Feel free to ask anything."
+              : "You seem busy — when would be a better time to call?";
+          }
+
           const nudgeAudio = await synthesizeSpeech(session, nudgeText).catch(() => null);
           if (nudgeAudio && ws.readyState === 1 && !session.closed) {
             clearEnablexMedia(ws, session);
