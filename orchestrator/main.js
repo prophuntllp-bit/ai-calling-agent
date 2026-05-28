@@ -2543,19 +2543,24 @@ function openDeepgramStream(ws, session, callSid) {
   if (session.deepgramWs?.readyState === WebSocket.OPEN) return session.deepgramWs;
 
   const lang = languageManager.getBaseLanguage(callSid) || "hi";
-  // Use Deepgram multi-language detection — supports Hindi, English, Marathi, Tamil, etc.
-  // "hi" forced only when explicitly set; otherwise use "multi" for auto-detection.
+  // "hi" (pure Hindi/Devanagari) fails on Hinglish — produces garbage transcripts like
+  // "Project, I don't know what the year is." for actual Hindi speech.
+  // "multi" (nova-2-general) handles Hindi+English code-switching natively — the right
+  // choice for Indian real-estate calls where leads speak Hinglish.
+  // Override per-deployment with DEEPGRAM_LANGUAGE env var if needed.
   const forcedLang = process.env.DEEPGRAM_LANGUAGE || "";
-  const dgLang = forcedLang || "hi"; // default hi; set DEEPGRAM_LANGUAGE=multi in Railway for auto-detect
+  const baseLang   = languageManager.getBaseLanguage(callSid) || "hi";
+  const langMap    = { hi: "multi", hinglish: "multi", en: "en-IN", mr: "mr", ta: "ta", te: "te", kn: "kn", ml: "ml", bn: "bn", gu: "gu", pa: "pa" };
+  const dgLang     = forcedLang || langMap[baseLang] || "multi";
   const dgParams = new URLSearchParams({
     encoding:        "mulaw",
     sample_rate:     "8000",
     model:           process.env.DEEPGRAM_MODEL || "nova-2-general",
     language:        dgLang,
+    detect_language: "true",    // return detected language per utterance for lang-switch tracking
     endpointing:     process.env.DEEPGRAM_ENDPOINTING || "300",  // 300ms silence → speech_final
     interim_results: "false",   // skip partials — only act on finals
     smart_format:    "true",    // normalises numbers/punctuation
-    // NOTE: no_delay and utterance_end_ms are NOT valid Deepgram params — omit to avoid HTTP 400
   });
 
   let dgWs;
@@ -2784,24 +2789,35 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
     } else {
       console.log(`[agent] continuing call callSid=${callSid} guidedState=${session.guidedState || "null"}`);
 
-      // Silence nudge — if lead doesn't respond within 12s, prompt them once.
-      // Prevents 30-second dead air where lead waits but doesn't know it's their turn.
-      const nudgeDelay = parseInt(process.env.SILENCE_NUDGE_MS || "12000", 10);
-      const nudgeAt = Date.now() + nudgeDelay;
+      // Silence nudge — fires if lead doesn't respond after the agent finishes speaking.
+      // Timer starts from echoSuppressionUntil (when user CAN actually speak), not from
+      // when the agent's LLM started — otherwise the nudge fires before echo suppression
+      // even ends, giving the user almost no time to respond.
+      const nudgeDelay  = parseInt(process.env.SILENCE_NUDGE_MS || "12000", 10);
+      // echoSuppressionUntil is updated when the streaming queue closes; grab it now with
+      // a small polling delay so it reflects the final close() value.
+      const scheduleNudge = () => {
+        const echoEnd   = session.telephony?.echoSuppressionUntil || 0;
+        const waitUntil = Math.max(echoEnd, Date.now()); // don't go back in time
+        const delay     = Math.max(0, waitUntil - Date.now()) + nudgeDelay;
+        const turnToken = session._lastTurnAt;
+        setTimeout(async () => {
+          if (session.closed || session._lastTurnAt !== turnToken || !ws || ws.readyState !== 1) return;
+          const nudgeLang = languageManager.getBaseLanguage(callSid) || "hi";
+          const nudgeText = nudgeLang === "hi" || nudgeLang === "hinglish"
+            ? "Aap wahan hain? Koi sawaal ho toh poochh sakte hain."
+            : "Are you there? Feel free to ask anything about the project.";
+          console.log(`[agent] silence-nudge callSid=${callSid}`);
+          const nudgeAudio = await synthesizeSpeech(session, nudgeText).catch(() => null);
+          if (nudgeAudio && ws.readyState === 1 && !session.closed) {
+            clearEnablexMedia(ws, session);
+            sendEnablexMedia(ws, session, nudgeAudio, "nudge");
+          }
+        }, delay);
+      };
       session._lastTurnAt = Date.now();
-      setTimeout(async () => {
-        if (session.closed || session._lastTurnAt > nudgeAt - nudgeDelay || !ws || ws.readyState !== 1) return;
-        const lang = languageManager.getBaseLanguage(callSid) || "hi";
-        const nudgeText = lang === "hi"
-          ? "Aap wahan hain? Koi sawaal ho toh poochh sakte hain."
-          : "Are you there? Feel free to ask anything about the project.";
-        console.log(`[agent] silence-nudge callSid=${callSid}`);
-        const nudgeAudio = await synthesizeSpeech(session, nudgeText).catch(() => null);
-        if (nudgeAudio && ws.readyState === 1 && !session.closed) {
-          clearEnablexMedia(ws, session);
-          sendEnablexMedia(ws, session, nudgeAudio, "nudge");
-        }
-      }, nudgeDelay);
+      // Schedule nudge after a brief pause to let echoSuppressionUntil settle (set by queue close())
+      setTimeout(scheduleNudge, 200);
     }
 
     console.log(`[agent] total_latency=${Date.now() - t0}ms callSid=${callSid} source=${source}`);
