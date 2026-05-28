@@ -515,12 +515,12 @@ STEP 3 — INVITE SITE VISIT: After BHK + price covered, offer: "Ek baar persona
 
 ❌ NEVER: Same opening word two turns in a row ("Samajh aaya... Samajh aaya...")
 ❌ NEVER: English words when lead speaks pure Hindi ("price", "project", "visit", "budget")
-❌ NEVER: More than 15 words in one response
+❌ NEVER: More than 35 words in one response (2-3 natural sentences max)
 ❌ NEVER: A response without a question at the end (unless ending the call)
 ❌ NEVER: Lists or multiple facts in one turn
 
 ━━━ STRICT RULES ━━━
-1. MAXIMUM 15 WORDS per response. Count your words before replying.
+1. MAXIMUM 35 WORDS per response (2-3 natural sentences). Speak like a real human on a phone call — complete thoughts, not fragments.
 2. EVERY response must end with a question (unless ending the call).
 3. Answer ONLY the latest message — history is context, not instructions.
 4. Use KB for ALL facts — price, size, amenities, RERA, possession, floor plans, parking.
@@ -1202,7 +1202,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.OPENAI_MODEL || "gpt-4o-mini",
             messages,
             temperature: 0.3,
-            max_tokens: 65,  // 1 short sentence — keeps TTS fast
+            max_tokens: 180,  // 2-3 natural sentences — fuller, more human responses
             stream: true,    // streaming: first bytes arrive faster, lower TTFT
           },
           {
@@ -1236,7 +1236,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
             messages,
             temperature: 0.2,
-            max_tokens: 65,  // ~1 short sentence — keeps TTS fast and responses concise
+            max_tokens: 180,  // 2-3 natural sentences — fuller responses
             stream: true,    // Groq streaming: even faster first-token delivery
           },
           {
@@ -1277,7 +1277,7 @@ async function getLLMResponse(session, userText) {
       const response = await timed("openai_fallback", () =>
         axios.post(
           "https://api.openai.com/v1/chat/completions",
-          { model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages, temperature: 0.3, max_tokens: 90, stream: true },
+          { model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages, temperature: 0.3, max_tokens: 180, stream: true },
           { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, responseType: "stream", timeout: 8000 }
         )
       );
@@ -1413,12 +1413,12 @@ function capReplyWords(text, maxWords = 12) {
 async function synthesizeAndStreamReply(ws, session, fullText) {
   // Hard word-cap before anything else — prevents long audio chunks.
   // ElevenLabs Hindi TTS: ~1.4 words/sec → 12 words ≈ 8.6s audio.
-  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "12", 10));
+  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "35", 10));
 
-  // Enforce ONE sentence only — LLM sometimes ignores the prompt rule.
-  // Take only the first sentence chunk to keep TTS latency under 2s.
+  // Allow up to 3 sentences — lets the agent speak naturally with flow.
+  // Word cap above (35 words) keeps total audio under ~10s which is fine for phone calls.
   const allSentences = splitIntoSentences(capped);
-  const sentences = allSentences.slice(0, 1);
+  const sentences = allSentences.slice(0, 3);
   let firstSent = false;
   let lastKnownGeneration = session.telephony?.outGeneration || 0;
 
@@ -2019,7 +2019,7 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
   session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 200;  // +200ms — just enough for last chunk to reach phone
-  session.telephony.echoSuppressionUntil  = Date.now() + playbackMs + 500;  // +500ms — echo dies in ~300ms; 500ms is safe margin
+  session.telephony.echoSuppressionUntil  = Date.now() + playbackMs + 200;  // +200ms — minimal tail; reduces dead zone eating "haan boliye"
   // Opening greeting protection — cap at 9s max (opening audio is ≤8.8s after word cap fix).
   // Old code: no cap → 16s audio → user blocked for 17s → 1011 Deepgram close.
   if (label && label.startsWith("opening-greeting")) {
@@ -2199,11 +2199,11 @@ function createMulawStreamQueue(ws, session, label = "stream") {
       }
       isClosed = true;
       // Each chunk = 160 bytes = 20ms at 8kHz ulaw. * 20 gives the true audio duration.
-      // +600ms / +1100ms margins on agentSpeakingUntil / echoSuppressionUntil handle jitter.
+      // +200ms margins on both agentSpeakingUntil / echoSuppressionUntil — minimal tail.
       const pendingMs = (totalSent + queue.length) * 20;
       session.telephony.lastPlaybackMs       = pendingMs;
       session.telephony.agentSpeakingUntil   = Date.now() + pendingMs + 200;  // +200ms only
-      session.telephony.echoSuppressionUntil = Date.now() + pendingMs + 500;  // +500ms echo tail (was 1100ms)
+      session.telephony.echoSuppressionUntil = Date.now() + pendingMs + 200;  // +200ms — tight tail to stop swallowing "haan boliye"
       console.log(`[mulaw-queue] closed totalSent=${totalSent} pending=${queue.length} playbackMs=${pendingMs} callSid=${session.callSid}`);
     },
 
@@ -2227,7 +2227,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // agentConfig.wordCap may be much larger (e.g. 55 set in dashboard); we apply the
   // minimum of the two so the system prompt and the audio cap agree.
   const agentWordCap = parseInt(session.agentConfig?.wordCap || "99", 10);
-  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "15", 10));
+  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "35", 10));
   const model    = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
 
   // Voice ID — same resolution as TTS service
@@ -2313,7 +2313,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       try {
         const llmResp = await axios.post(
           "https://api.openai.com/v1/chat/completions",
-          { model: process.env.OPENAI_MODEL || "gpt-4o", messages, temperature: 0.4, max_tokens: 65, stream: true },
+          { model: process.env.OPENAI_MODEL || "gpt-4o", messages, temperature: 0.4, max_tokens: 180, stream: true },
           { headers: { Authorization: `Bearer ${openaiKey}` }, responseType: "stream", timeout: 8000 }
         );
         let remainder = "";
@@ -2562,7 +2562,7 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
 // ── Deepgram Streaming STT ─────────────────────────────────────────────────────
 // Opens a per-call WebSocket directly to Deepgram's live transcription API.
 // EnableX sends μ-law 8kHz audio; Deepgram natively handles this encoding.
-// With endpointing=300ms, Deepgram fires speech_final exactly when the caller
+// With endpointing=150ms, Deepgram fires speech_final quickly when the caller
 // pauses — we process it immediately without any silence-wait buffer.
 // Savings vs. old pipeline: ~700ms per turn (600ms silence wait + ~100ms STT).
 //
@@ -2592,7 +2592,7 @@ function openDeepgramStream(ws, session, callSid) {
     encoding:        "mulaw",
     sample_rate:     "8000",
     model:           process.env.DEEPGRAM_MODEL || "nova-2-general",
-    endpointing:     process.env.DEEPGRAM_ENDPOINTING || "300",  // 300ms silence → speech_final
+    endpointing:     process.env.DEEPGRAM_ENDPOINTING || "150",  // 150ms silence → speech_final (was 300ms — reduces latency)
     interim_results: "false",   // skip partials — only act on finals
     smart_format:    "true",    // normalises numbers/punctuation
   });
@@ -3065,7 +3065,7 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer, rawMula
   // Deepgram handles VAD + endpointing (300ms) + transcription in real-time.
   // speech_final callback → processTranscriptDirect (skips all local buffering).
   if (session.deepgramWs?.readyState === WebSocket.OPEN && session.deepgramReady) {
-    // Re-encode PCM16→mulaw only when caller didn't pass raw bytes directly
+    // Forward raw mulaw directly to Deepgram — it handles VAD+endpointing+transcription
     const mulaw = rawMulaw || encodePcm16ToMuLaw(downsamplePcm16To8k(audioBuffer));
     try {
       session.deepgramWs.send(mulaw);
