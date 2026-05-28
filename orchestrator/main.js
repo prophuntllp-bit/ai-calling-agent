@@ -482,33 +482,42 @@ STEP 3 — INVITE SITE VISIT: After BHK + price covered, offer: "Ek baar persona
 
 ━━━ CONVERSATION FORMULA — use this pattern every single turn ━━━
 
-① REACT (1-2 words) — Respond emotionally to what the lead just said FIRST:
-   Good news / interest    → "वाह!", "बढ़िया!", "परफेक्ट!", "अच्छा!"
-   Budget / concern        → "समझ आया.", "सही बात.", "बिल्कुल."
-   Acknowledgment (ok/hmm) → Ask a follow-up question immediately
-   "Hello?" / silence      → "हाँ, बोलिए!" or one quick fact + question
+① REACT (1-3 words) — Emotionally acknowledge FIRST, before any info:
+   Great news / interest  → "वाह!", "बहुत बढ़िया!", "एकदम सही!", "अरे वाह!", "शानदार!", "परफेक्ट!"
+   Budget shared          → "समझ गया!", "बिल्कुल.", "अच्छा बताया."
+   Concern / objection    → "सही बात है.", "समझ सकती हूँ.", "ज़रूर."
+   Acknowledgment only    → SKIP react and ask a follow-up question immediately — never repeat "समझ आया" twice
+   Silence / "hello?"     → "हाँ, बोलिए!" then one quick fact + question
 
-② REFLECT (2-3 words, optional) — Mirror their words to show you listened:
-   e.g., "बानेर, एक करोड़ —"  |  "2BHK, investment ke liye —"
+② REFLECT (2-4 words) — Echo their key words so they feel heard:
+   e.g., "बानेर, एक करोड़ —"  |  "2BHK, गार्डन व्यू —"  |  "Investment ke liye —"
 
-③ ONE FACT — Exactly one piece of KB info. No lists. No paragraphs.
+③ ONE FACT — One KB point only. No lists. No long paragraphs. Natural, conversational.
 
-④ QUESTION (mandatory) — End every turn with one short question:
-   e.g., "Budget kya hai?", "2BHK dekhein?", "Balcony chahiye?", "Visit kab?"
+④ QUESTION (mandatory) — End every single turn with exactly one short question.
+
+━━━ LANGUAGE MATCHING — CRITICAL ━━━
+• Pure Hindi speaker → reply in PURE Hindi (Devanagari). Zero English mixing.
+• Pure English speaker → reply in English only.
+• Marathi speaker → reply in Marathi.
+• Hinglish (mixed) speaker → natural Hinglish is fine.
+• DETECT from what THEY say, not what you prefer. Mirror them exactly.
+• NEVER switch languages mid-reply. Be consistent throughout your response.
 
 ━━━ EXAMPLES — study these patterns ━━━
 
-✅ "वाह, बानेर! 2BHK 85sqm milega. Budget?"
-✅ "Badiya! 1.2cr se start — balcony chahiye?"
-✅ "Samajh aaya. EMI option bhi hai. Visit kab?"
-✅ "Bilkul! 3BHK 1.85cr. Investment ya self-use?"
-✅ "Haan, bol rahe hain — 2BHK ya 3BHK dekhna hai?"
-✅ "Perfect match hai budget mein. Kab dekhna chahenge?"
+✅ "वाह, बानेर! 2BHK 85 वर्ग मीटर मिलेगा. बजट क्या है?"  ← pure Hindi lead
+✅ "Bahut badhiya! 1.2cr se start — balcony chahiye?"      ← Hinglish lead
+✅ "अरे वाह, एक करोड़! एकदम फिट बैठता है. 2BHK या 3BHK?"  ← pure Hindi lead
+✅ "Ekdum sahi! 3BHK 1.85cr mein milega. Investment hai?"
+✅ "Perfect budget! Pool-facing units bhi hain. Kab dekhein?"
+✅ "Shukriya! Site visit Shanivar ko bhi ho sakti hai. Theek rahega?"
 
-❌ NEVER: "Haan main hoon — Mahindra Citadel mein 2 BHK 1.2 crore se start hoti hai" (robotic)
-❌ NEVER: Starting two turns in a row with the same word
-❌ NEVER: More than 12 words in one response
-❌ NEVER: A response without a question at the end (unless closing the call)
+❌ NEVER: Same opening word two turns in a row ("Samajh aaya... Samajh aaya...")
+❌ NEVER: English words when lead speaks pure Hindi ("price", "project", "visit", "budget")
+❌ NEVER: More than 15 words in one response
+❌ NEVER: A response without a question at the end (unless ending the call)
+❌ NEVER: Lists or multiple facts in one turn
 
 ━━━ STRICT RULES ━━━
 1. MAXIMUM 12 WORDS per response. Count your words before replying.
@@ -1340,10 +1349,14 @@ async function getOpeningMessage(session) {
 function emotionFromContext(text = "", state = {}) {
   const lowered = text.toLowerCase();
   if (state.stage === "opening") return "warm";
-  if (/(benefit|amenity|feature|offer|launch)/.test(lowered)) return "excited";
-  if (/(price|budget|expensive|concern|issue|problem)/.test(lowered)) return "empathetic";
-  if (/(visit|schedule|book|callback|meeting)/.test(lowered)) return "professional";
-  return "neutral";
+  // Excitement triggers — user expressing interest, mentioning nice features, positives
+  if (/(benefit|amenity|feature|offer|launch|badhiya|achha|accha|acha|wah|vah|pasand|sundar|bढ़िया|शानदार|बढ़िया|अच्छा|वाह|पसंद|सुंदर|interest|good|great|nice|love|like)/.test(lowered)) return "excited";
+  // Empathy triggers — concerns, price sensitivity, hesitation
+  if (/(price|budget|expensive|concern|issue|problem|sochna|baad|later|costly|mehenga|महंगा|सोचना|बाद में|परेशान|दिक्कत|theek nahi|nahi chahiye|nahi chahie)/.test(lowered)) return "empathetic";
+  // Professional triggers — site visit, booking, scheduling
+  if (/(visit|schedule|book|callback|meeting|dekhna|site|confirm|date|time|slot|aana|aaun|आना|देखना|बुक|कब)/.test(lowered)) return "professional";
+  // Default — warm (not neutral) — real estate calls benefit from a warm baseline
+  return "warm";
 }
 
 // Sarvam AI voice roster — female & male per language
@@ -2221,12 +2234,16 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
 
   // Emotion → voice settings
   const emotion = emotionFromContext(userText, { stage: session.stage });
+  // Voice emotion settings — tuned for Agni-style expressive Hindi real estate calls.
+  // Lower stability = more natural pitch variation (less robotic).
+  // Higher style = more emotional expressiveness (warmth, enthusiasm, empathy).
+  // similarity_boost: 1.0 keeps voice identity consistent across all emotions.
   const ESETTINGS = {
-    warm:         { stability: 0.35, similarity_boost: 1.0, style: 0.25, speed: 0.95 },
-    excited:      { stability: 0.20, similarity_boost: 1.0, style: 0.50, speed: 1.05 },
-    empathetic:   { stability: 0.60, similarity_boost: 1.0, style: 0.10, speed: 0.90 },
-    professional: { stability: 0.70, similarity_boost: 1.0, style: 0.05, speed: 1.00 },
-    neutral:      { stability: 0.50, similarity_boost: 1.0, style: 0.00, speed: 1.00 },
+    warm:         { stability: 0.28, similarity_boost: 1.0, style: 0.40, speed: 0.93 },  // welcoming, friendly
+    excited:      { stability: 0.15, similarity_boost: 1.0, style: 0.60, speed: 1.05 },  // "वाह!", good news
+    empathetic:   { stability: 0.45, similarity_boost: 1.0, style: 0.25, speed: 0.90 },  // budget concerns
+    professional: { stability: 0.50, similarity_boost: 1.0, style: 0.20, speed: 1.00 },  // site visit confirm
+    neutral:      { stability: 0.35, similarity_boost: 1.0, style: 0.25, speed: 0.97 },  // normal conversational
   };
   const voiceSettings = ESETTINGS[emotion] || ESETTINGS.neutral;
 
@@ -2640,7 +2657,12 @@ function openDeepgramStream(ws, session, callSid) {
       inbound.speculativeAudio   = null;
     }
 
-    await processTranscriptDirect(ws, session, callSid, transcript, "deepgram");
+    // Extract Deepgram's per-utterance language detection (only present when detect_language=true)
+    const dgDetectedLang = msg.channel?.detected_language || msg.detected_language || null;
+    if (dgDetectedLang) {
+      console.log(`[deepgram] detected_language=${dgDetectedLang} callSid=${callSid}`);
+    }
+    await processTranscriptDirect(ws, session, callSid, transcript, "deepgram", dgDetectedLang);
   });
 
   dgWs.on("error", (err) => {
@@ -2685,7 +2707,7 @@ function closeDeepgramStream(session) {
 
 // processTranscriptDirect — fast path when Deepgram already produced the transcript.
 // Same pipeline as processCallerUtterance but STT is skipped entirely.
-async function processTranscriptDirect(ws, session, callSid, transcriptText, source = "deepgram") {
+async function processTranscriptDirect(ws, session, callSid, transcriptText, source = "deepgram", detectedLanguage = null) {
   const inbound = session.inboundAudio;
   if (!inbound || inbound.processing || session.telephony?.hangupScheduled || session.closed) return;
 
@@ -2730,12 +2752,15 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
     }
     session.firstValidUtterance = true;
 
-    // Language tracking
+    // Language tracking — prefer Deepgram's detected_language over our prior guess.
+    // When detect_language=true, Deepgram tells us per-utterance what language it heard.
+    // This is the ground truth for language switching (Marathi, Tamil, etc.).
     const prevLang = languageManager.getBaseLanguage(callSid);
-    languageManager.recordUtterance(callSid, prevLang || "hi", cleanText);
+    const langForRecord = detectedLanguage || prevLang || "hi";
+    languageManager.recordUtterance(callSid, langForRecord, cleanText);
     const newLang = languageManager.getBaseLanguage(callSid);
     if (prevLang !== newLang) {
-      console.log(`[lang-detect] language switched ${prevLang} → ${newLang} callSid=${callSid}`);
+      console.log(`[lang-detect] language switched ${prevLang} → ${newLang} (deepgram detected: ${detectedLanguage || "n/a"}) callSid=${callSid}`);
     }
 
     session.stage = "qualification";
