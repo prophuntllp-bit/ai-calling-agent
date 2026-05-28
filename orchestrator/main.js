@@ -2018,8 +2018,8 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
   const playbackMs = chunks.length * 20;
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
-  session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 600;  // +600ms — barge-in window
-  session.telephony.echoSuppressionUntil  = Date.now() + playbackMs + 1100; // +1100ms — swallow echo after agent finishes
+  session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 200;  // +200ms — just enough for last chunk to reach phone
+  session.telephony.echoSuppressionUntil  = Date.now() + playbackMs + 500;  // +500ms — echo dies in ~300ms; 500ms is safe margin
   // Opening greeting protection — cap at 9s max (opening audio is ≤8.8s after word cap fix).
   // Old code: no cap → 16s audio → user blocked for 17s → 1011 Deepgram close.
   if (label && label.startsWith("opening-greeting")) {
@@ -2202,8 +2202,8 @@ function createMulawStreamQueue(ws, session, label = "stream") {
       // +600ms / +1100ms margins on agentSpeakingUntil / echoSuppressionUntil handle jitter.
       const pendingMs = (totalSent + queue.length) * 20;
       session.telephony.lastPlaybackMs       = pendingMs;
-      session.telephony.agentSpeakingUntil   = Date.now() + pendingMs + 600;
-      session.telephony.echoSuppressionUntil = Date.now() + pendingMs + 1100;
+      session.telephony.agentSpeakingUntil   = Date.now() + pendingMs + 200;  // +200ms only
+      session.telephony.echoSuppressionUntil = Date.now() + pendingMs + 500;  // +500ms echo tail (was 1100ms)
       console.log(`[mulaw-queue] closed totalSent=${totalSent} pending=${queue.length} playbackMs=${pendingMs} callSid=${session.callSid}`);
     },
 
@@ -2664,9 +2664,9 @@ function openDeepgramStream(ws, session, callSid) {
     const words = transcript.split(/\s+/).length;
     const KNOWN_CONV = /\b(hello|haan|ha|ji|nahi|nahin|theek|ok|okay|yes|no|done|bilkul|zaroor|sure|accha|achha|acha|bye|namaste|bol|bolo|sun|suno|kya|kaun|aap|tum|main|budget|bhk|price|location|project|visit|kab|kitna|kitni|details|info|batao|batayein|samjha|samjhaiye|interested|interest|dekhna|chahiye|chahie|karo|lena|dikhao)\b/i.test(transcript);
     const minConfForLength =
-      words === 1 ? (KNOWN_CONV ? 0.55 : 0.65) :
-      words === 2 ? (KNOWN_CONV ? 0.50 : 0.58) :
-      words === 3 ? 0.52 :
+      words === 1 ? (KNOWN_CONV ? 0.48 : 0.65) :  // known words: 0.55→0.48 (barge-in may truncate)
+      words === 2 ? (KNOWN_CONV ? 0.45 : 0.55) :  // "haan boliye", "interested hoon" → 0.45+
+      words === 3 ? 0.50 :
       words <= 4  ? 0.47 :
       MIN_CONF_ANY; // 5+ words: absolute floor only
     if (conf < MIN_CONF_ANY || conf < minConfForLength) {
@@ -2980,6 +2980,7 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer, rawMula
     session.inboundAudio = {
       chunks: [], speechFrames: 0, silenceFrames: 0,
       bargeinFrames: 0,           // consecutive speech frames during agent playback
+      bargeinBuffer: [],          // mulaw frames buffered during barge-in detection → flushed to Deepgram on confirm
       processing: false, lastFlushAt: Date.now(),
       speculativePromise: null,   // in-flight STT request fired early
       speculativeAudio: null,     // audio snapshot sent speculatively
@@ -3003,28 +3004,47 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer, rawMula
   }
 
   // Barge-in: caller speaks while agent is playing → cancel agent audio.
-  // Require 3 consecutive speech frames (~60ms) before triggering — prevents a single
-  // breath, background noise, or room echo from cutting the agent mid-sentence.
+  // Threshold: 6 consecutive frames (120ms) — catches "haan" (0.15s) reliably.
+  // Echo artefacts are short bursts (<80ms = 4 frames) so 6 frames filters them.
+  // Was 10 frames (200ms) which was too high — "haan" at 120ms never triggered barge-in,
+  // so user's speech was dropped by echo suppression and Deepgram never heard it.
+  //
+  // KEY FIX: buffer frames during barge-in detection so Deepgram gets the FULL word.
+  // Without buffering, frames 1-5 of "haan" were dropped before Deepgram, giving
+  // Deepgram only the tail of the word → garbled transcription or silence.
   if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
     if (hasSpeech) {
-      inbound.bargeinFrames = (inbound.bargeinFrames || 0) + 1;
-      if (inbound.bargeinFrames >= 10) {
-        // 10 consecutive frames = 200ms of sustained speech — real human voice.
-        // Raised from 6 (120ms) to reduce false barge-ins from brief sounds/echo.
-        // Genuine speech sustains easily; clicks/echo/noise rarely hit 200ms.
+      inbound.bargeinFrames  = (inbound.bargeinFrames  || 0) + 1;
+      inbound.bargeinBuffer  = inbound.bargeinBuffer  || [];
+      inbound.bargeinBuffer.push(rawMulaw || null); // store mulaw frame for Deepgram replay
+      if (inbound.bargeinFrames >= 6) {
+        // Barge-in confirmed — stop agent, lift suppression, flush buffered frames to Deepgram
         clearEnablexMedia(ws, session);
         session.telephony.agentSpeakingUntil   = 0;
-        session.telephony.echoSuppressionUntil = 0; // user is actually speaking — lift echo suppression too
+        session.telephony.echoSuppressionUntil = 0;
+        // Replay buffered frames so Deepgram hears the FULL word (not just frames 6+)
+        if (session.deepgramWs?.readyState === WebSocket.OPEN && session.deepgramReady) {
+          for (const storedMulaw of inbound.bargeinBuffer) {
+            if (storedMulaw) {
+              try { session.deepgramWs.send(storedMulaw); } catch {}
+            } else {
+              // fallback: re-encode from PCM16 not available — send current frame only
+            }
+          }
+        }
         inbound.bargeinFrames = 0;
+        inbound.bargeinBuffer = [];
         inbound.speculativePromise = null;
         inbound.speculativeAudio   = null;
-        console.log(`[enablex-media] barge-in confirmed (5 frames) callSid=${callSid}`);
+        console.log(`[enablex-media] barge-in confirmed (6 frames) callSid=${callSid}`);
       }
     } else {
       inbound.bargeinFrames = 0; // reset on silence — must be sustained speech
+      inbound.bargeinBuffer = [];
     }
   } else {
     inbound.bargeinFrames = 0;
+    inbound.bargeinBuffer = [];
   }
 
   if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
