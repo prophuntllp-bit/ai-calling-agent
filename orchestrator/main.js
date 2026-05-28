@@ -1329,17 +1329,18 @@ async function getOpeningMessage(session) {
   const rawOpening = normalizeTtsText(interpolated);
   const opening = rawOpening
     ? (() => {
-        // Allow up to 2 sentences, cap at 20 words.
-        // ElevenLabs Hindi TTS: ~4 words/sec → 20 words ≈ 5s audio — well within 9s opening cap.
-        // Single-sentence cap at 10 was cutting user's 2-sentence template in half.
+        // Allow up to 3 sentences, cap at 30 words.
+        // ElevenLabs Hindi TTS: ~3.5 words/sec → 30 words ≈ 8.5s audio — acceptable for opening.
+        // 20-word cap was cutting configured opening lines mid-sentence when templates
+        // had more than one sentence of introduction (e.g. name + company + project intro).
         const sentences = rawOpening.split(/(?<=[.!?।])\s+/);
-        const twoSentences = sentences.slice(0, 2).join(" ").trim();
-        return capReplyWords(twoSentences, 20);
+        const threeSentences = sentences.slice(0, 3).join(" ").trim();
+        return capReplyWords(threeSentences, 30);
       })()
     : (() => {
         // Short hardcoded fallback — only used if opening line field is completely empty
-        const fallback = `Namaste ${leadName} ji! Main Priya hoon Prop Hunt se.`;
-        return capReplyWords(fallback, 20);
+        const fallback = `Namaste ${leadName} ji! Main Priya hoon Prop Hunt se. Aapko ek project ke baare mein batana tha.`;
+        return capReplyWords(fallback, 30);
       })();
 
   // Seed history so subsequent LLM turns have context of how the call started
@@ -2640,19 +2641,31 @@ function openDeepgramStream(ws, session, callSid) {
     //   • Any conf < 0.45 → reject always (language-switching hallucinations, e.g. Spanish at 0.40)
     //   • conf < 0.70 AND ≤3 words → reject  ("Media half food.", "Abi" echoes, random clicks)
     //   • conf < 0.60 AND ≤5 words → reject  (short ambiguous fragments)
+    // ── Confidence filter — tuned for real Indian phone call speech ────────────
+    // Deepgram's confidence for Hindi/Hinglish on mobile networks is typically 0.55–0.85.
+    // We use a SLIDING scale: shorter phrases need higher confidence to pass
+    // (short noise bursts are indistinguishable from real speech at low conf).
+    //
+    // CRITICAL LESSON: "Hi. Interested. Who?" at conf=0.67, 3 words is REAL USER SPEECH.
+    // The old flat 0.70 threshold for ≤3 words was silently dropping genuine responses.
+    //
+    // Scale:
+    //   1 word  → need 0.65+ (or a known conversational word at 0.55+)
+    //   2 words → need 0.58+ (or a known conversational word at 0.50+)
+    //   3 words → need 0.52+  ← "Hi. Interested. Who." at 0.67 PASSES now
+    //   4 words → need 0.47+  (effectively the 0.45 floor)
+    //   5+ words → 0.45 absolute floor (longer = harder to fake as noise)
     const MIN_CONF_ANY = parseFloat(process.env.DEEPGRAM_MIN_CONF || "0.45");
     const words = transcript.split(/\s+/).length;
-    // Two-word nonsense check — short phrases need very high confidence OR must contain
-    // a known conversational word. "Location gas." / "Apply." sound plausible to Deepgram
-    // but are almost always echo artefacts or background noise on Indian phone lines.
-    const KNOWN_SHORT = /\b(hello|haan|ha|ji|nahi|nahin|theek|ok|okay|yes|no|done|bilkul|zaroor|sure|accha|achha|acha|bye|namaste|hello|bol|bolo|sun|suno|kya|kaun|aap|tum|main|budget|bhk|price|location|project|visit|kab|kitna|kitni|details|info|batao|batayein|samjha|samjhaiye)\b/i.test(transcript);
-    if (
-      conf < MIN_CONF_ANY ||
-      (conf < 0.80 && words <= 2 && !KNOWN_SHORT) ||  // tighter: 2-word must be 80%+ unless it's a known word
-      (conf < 0.70 && words <= 3) ||
-      (conf < 0.60 && words <= 5)
-    ) {
-      console.log(`[deepgram] low-confidence transcript skipped callSid=${callSid} conf=${conf.toFixed(2)} words=${words} text="${transcript}"`);
+    const KNOWN_CONV = /\b(hello|haan|ha|ji|nahi|nahin|theek|ok|okay|yes|no|done|bilkul|zaroor|sure|accha|achha|acha|bye|namaste|bol|bolo|sun|suno|kya|kaun|aap|tum|main|budget|bhk|price|location|project|visit|kab|kitna|kitni|details|info|batao|batayein|samjha|samjhaiye|interested|interest|dekhna|chahiye|chahie|karo|lena|dikhao)\b/i.test(transcript);
+    const minConfForLength =
+      words === 1 ? (KNOWN_CONV ? 0.55 : 0.65) :
+      words === 2 ? (KNOWN_CONV ? 0.50 : 0.58) :
+      words === 3 ? 0.52 :
+      words <= 4  ? 0.47 :
+      MIN_CONF_ANY; // 5+ words: absolute floor only
+    if (conf < MIN_CONF_ANY || conf < minConfForLength) {
+      console.log(`[deepgram] conf-filter skipped callSid=${callSid} conf=${conf.toFixed(2)} minNeeded=${minConfForLength} words=${words} text="${transcript}"`);
       return;
     }
 
