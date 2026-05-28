@@ -2289,7 +2289,10 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       // ulaw_8000 = G.711 μ-law at 8kHz — directly compatible with EnableX, no conversion needed.
       // pcm_8000 is NOT supported by ElevenLabs WebSocket streaming (stream-input endpoint)
       // and silently falls back to MP3 → treating MP3 bytes as PCM → crackling/garbage audio.
-      `?model_id=${model}&output_format=ulaw_8000&optimize_streaming_latency=4`;
+      // optimize_streaming_latency=3: balances TTFA vs audio quality.
+      // Level 4 is most aggressive (lowest latency) but causes audio artifacts / robotic
+      // voice on phone calls — especially noticeable mid-sentence on ulaw_8000.
+      `?model_id=${model}&output_format=ulaw_8000&optimize_streaming_latency=3`;
     let elevenWs;
     try { elevenWs = new WebSocket(wsUrl, { headers: { "xi-api-key": elevenKey } }); }
     catch (e) { return reject(e); }
@@ -2299,9 +2302,11 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       elevenWs.send(JSON.stringify({
         text: " ",
         voice_settings: voiceSettings,
-        // Small first chunk (50 chars ≈ 12 Hindi words) → ElevenLabs starts generating
-        // before we finish sending — shaves ~400ms off TTFA on short responses.
-        generation_config: { chunk_length_schedule: [50, 100, 150, 250] },
+        // chunk_length_schedule: controls audio chunk sizes ElevenLabs sends back.
+        // [50, 100...] was too aggressive — small chunks on phone calls (ulaw_8000) cause
+        // robotic/glitchy audio because the G.711 codec needs sufficient audio length to
+        // maintain natural prosody. Use larger chunks for clean phone call quality.
+        generation_config: { chunk_length_schedule: [120, 160, 250] },
       }));
 
       // LLM streaming — tokens pipe directly into ElevenLabs WS
@@ -2774,8 +2779,13 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
     }
     session.firstValidUtterance = true;
 
-    // Reset silence-nudge counter — user responded, so nudge slate is clean
-    session.nudgesSent = 0;
+    // Reset silence-nudge counter ONLY for substantive responses (≥4 words).
+    // Single-word replies ("Hello?", "Location", "Project") don't count as real engagement —
+    // resetting on those caused an infinite nudge #1 loop because the counter never grew.
+    const wordCountForNudgeReset = cleanText.split(/\s+/).filter(w => w.length > 0).length;
+    if (wordCountForNudgeReset >= 4) {
+      session.nudgesSent = 0;
+    }
 
     // Language tracking — prefer Deepgram's detected_language over our prior guess.
     // When detect_language=true, Deepgram tells us per-utterance what language it heard.
@@ -2790,6 +2800,30 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
 
     session.stage = "qualification";
     if (session.status === "stream_started") session.status = "active";
+
+    // ── Goodbye detection — intercept before LLM, close call immediately ─────
+    // If user clearly signals they want to end the call, don't fire another LLM turn.
+    // Pattern: matches "bye", "thank you bye", "dhanyawaad", "alvida", etc. at start
+    // OR contains "bye"/"goodbye" in a short phrase (≤5 words, indicating wrap-up).
+    const lcClean = cleanText.toLowerCase().replace(/[।!?.]/g, "").trim();
+    const isGoodbye =
+      /^(bye|goodbye|alvida|shukriya|dhanyawaad|dhanyavaad|tata|ok bye|theek hai bye|chalte hain|chal theek|chhodo|nahi chahiye|nahin chahiye|band karo|khatam|no thanks|no thank you|not interested|abhi nahi|nahi abhi)\b/i.test(lcClean) ||
+      (/\b(bye|goodbye|dhanyawaad|shukriya|alvida)\b/i.test(lcClean) && wordCountForNudgeReset <= 5);
+    if (isGoodbye && !isTerminalGuidedState(session)) {
+      console.log(`[agent] goodbye detected callSid=${callSid} text="${cleanText}"`);
+      const lang = languageManager.getBaseLanguage(callSid) || "hi";
+      const goodbyeText = (lang === "hi" || lang === "hinglish")
+        ? "Theek hai! Agar kabhi bhi property dekhni ho, toh hamare paas zaroor aayein. Dhanyawaad! Namaste."
+        : "No problem! Feel free to reach out anytime. Thank you and goodbye!";
+      session.guidedState = "closed";
+      const goodbyeAudio = await synthesizeSpeech(session, goodbyeText).catch(() => null);
+      if (goodbyeAudio && ws.readyState === WebSocket.OPEN && !session.closed) {
+        clearEnablexMedia(ws, session);
+        sendEnablexMedia(ws, session, goodbyeAudio, "goodbye");
+      }
+      scheduleAgentSideHangup(ws, session, "user-goodbye");
+      return;
+    }
 
     const t1 = Date.now();
 
@@ -2873,7 +2907,7 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
           session.nudgesSent = (session.nudgesSent || 0) + 1;
           console.log(`[agent] silence-nudge #${session.nudgesSent} callSid=${callSid}`);
 
-          const MAX_NUDGES = parseInt(process.env.MAX_SILENCE_NUDGES || "2", 10);
+          const MAX_NUDGES = parseInt(process.env.MAX_SILENCE_NUDGES || "3", 10);
           if (session.nudgesSent > MAX_NUDGES) {
             // Lead not responding — say goodbye and hang up
             const byeText = nudgeLang === "hi" || nudgeLang === "hinglish"
