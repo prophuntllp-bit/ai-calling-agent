@@ -427,14 +427,26 @@ function buildSystemPrompt(lead, knowledgeContext, language, agentConfig = {}) {
 
   // ── Language instruction — fully adaptive, no language barrier ───────────
   // ElevenLabs TTS speaks any language the LLM writes — no need to force Hindi.
-  const languageInstruction = `LANGUAGE RULE: Always mirror the language the lead is speaking.
-- If they speak Hindi → reply in Hindi (Devanagari script, natural conversational tone)
-- If they speak English → reply in English
-- If they speak Hinglish (mixed Hindi-English) → reply in Hinglish
-- If they speak Marathi, Tamil, Telugu, Punjabi, Bengali, Gujarati, or any other language → reply in that same language
-- NEVER force Hindi on someone who is not speaking Hindi
-- Numbers, prices, and project names can always be spoken naturally in the detected language
-- Keep responses SHORT — max ${wordCap} words — one clear point per reply`;
+  const languageInstruction = `LANGUAGE RULE — STRICT:
+
+SUPPORTED LANGUAGES: Hindi, Marathi, English, Hinglish (mixed Hindi-English).
+These are the only languages you speak on this call.
+
+LANGUAGE MATCHING:
+- Lead speaks Hindi → reply PURE Hindi (Devanagari). No English mixing.
+- Lead speaks English → reply in English only.
+- Lead speaks Hinglish → reply in natural Hinglish. Match their mix ratio.
+- Lead says "Marathi mein bolo" or speaks Marathi → switch to Marathi and STAY there.
+- Lead speaks any OTHER language (Odia, Tamil, Telugu, Kannada, Bengali, etc.) → DO NOT reply in that language. Instead respond in Hindi: "Main sirf Hindi, Marathi aur English mein baat kar sakti hoon. Kya aap Hindi mein baat kar sakte hain?"
+
+LANGUAGE LOCK — CRITICAL:
+Once a language is established (especially after user explicitly asks for a language), MAINTAIN it for the entire conversation.
+- If user said "Marathi mein bolo" → stay in Marathi even if they use Hindi words in acknowledgments like "हाँ", "ठीक है", "ओके".
+- Only switch language if user EXPLICITLY requests a different language ("Hindi mein bolo", "speak in English").
+- One Hindi/English word from user = NOT a language switch. It's just acknowledgment.
+
+Keep responses SHORT — max ${wordCap} words — one clear point per reply.`;
+
 
   // ── Sales pitch philosophy based on tone ─────────────────────────────────
   const pitchBlock = {
@@ -2515,7 +2527,36 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     session.firstValidUtterance = true;
 
     const prevLang = languageManager.getBaseLanguage(callSid);
-    languageManager.recordUtterance(callSid, transcription.language, transcription.text);
+
+    // Language filter — same as Deepgram path: block unsupported languages.
+    // ElevenLabs STT may return correct lang code, or may misreport (e.g. Odia text with lang=hin).
+    // We filter at the language code level here; the system prompt handles script-level fallback.
+    const SUPPORTED_STT_LANGS = new Set(["hi", "hin", "mr", "en", "pa", "bn", "gu", "kn", "ml", "ta", "te", "hinglish", "auto"]);
+    const sttLang = transcription.language || prevLang || "hi";
+    const safeLang = SUPPORTED_STT_LANGS.has(sttLang) ? sttLang : (prevLang || "hi");
+    if (!SUPPORTED_STT_LANGS.has(sttLang)) {
+      console.log(`[lang-detect] ignoring unsupported stt_lang="${sttLang}" keeping="${prevLang}" callSid=${callSid}`);
+    }
+
+    // Language lock — if user explicitly set a language this session, require 3+ turns
+    // in a new language before switching. Prevents "यही ठीक है" flipping out of Marathi.
+    const lockedLang = session._lockedLanguage;
+    const langToRecord = lockedLang || safeLang;
+    languageManager.recordUtterance(callSid, langToRecord, transcription.text);
+
+    // Detect explicit language switch requests — lock the new language
+    const lcText = transcription.text.toLowerCase();
+    if (/marathi|मराठी/.test(lcText)) {
+      session._lockedLanguage = "mr";
+      console.log(`[lang-lock] locked to Marathi callSid=${callSid}`);
+    } else if (/hindi|हिंदी|हिन्दी/.test(lcText)) {
+      session._lockedLanguage = "hi";
+      console.log(`[lang-lock] locked to Hindi callSid=${callSid}`);
+    } else if (/english|अंग्रेज़ी/.test(lcText)) {
+      session._lockedLanguage = "en";
+      console.log(`[lang-lock] locked to English callSid=${callSid}`);
+    }
+
     const newLang = languageManager.getBaseLanguage(callSid);
     if (prevLang !== newLang) {
       console.log(`[lang-detect] language switched ${prevLang} → ${newLang} callSid=${callSid}`);
@@ -2900,8 +2941,24 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
     if (detectedLanguage && !SUPPORTED_CALL_LANGS.has(detectedLanguage)) {
       console.log(`[lang-detect] ignoring unsupported lang="${detectedLanguage}" keeping="${prevLang}" callSid=${callSid}`);
     }
-    const langForRecord = effectiveDgLang || prevLang || "hi";
+    // Language lock: respect explicit user language requests across both STT paths
+    const lockedLangDg = session._lockedLanguage;
+    const langForRecord = lockedLangDg || effectiveDgLang || prevLang || "hi";
     languageManager.recordUtterance(callSid, langForRecord, cleanText);
+
+    // Detect explicit language switch requests — lock new language for this session
+    const lcCleanForLang = cleanText.toLowerCase();
+    if (/marathi|मराठी/.test(lcCleanForLang)) {
+      session._lockedLanguage = "mr";
+      console.log(`[lang-lock] locked to Marathi (dg) callSid=${callSid}`);
+    } else if (/hindi|हिंदी|हिन्दी/.test(lcCleanForLang)) {
+      session._lockedLanguage = "hi";
+      console.log(`[lang-lock] locked to Hindi (dg) callSid=${callSid}`);
+    } else if (/english|अंग्रेज़ी/.test(lcCleanForLang)) {
+      session._lockedLanguage = "en";
+      console.log(`[lang-lock] locked to English (dg) callSid=${callSid}`);
+    }
+
     const newLang = languageManager.getBaseLanguage(callSid);
     if (prevLang !== newLang) {
       console.log(`[lang-detect] language switched ${prevLang} → ${newLang} (deepgram detected: ${detectedLanguage || "n/a"}) callSid=${callSid}`);
