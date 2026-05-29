@@ -515,12 +515,12 @@ STEP 3 — INVITE SITE VISIT: After BHK + price covered, offer: "Ek baar persona
 
 ❌ NEVER: Same opening word two turns in a row ("Samajh aaya... Samajh aaya...")
 ❌ NEVER: English words when lead speaks pure Hindi ("price", "project", "visit", "budget")
-❌ NEVER: More than 35 words in one response (2-3 natural sentences max)
+❌ NEVER: More than 22 words in one response (2 natural sentences max)
 ❌ NEVER: A response without a question at the end (unless ending the call)
 ❌ NEVER: Lists or multiple facts in one turn
 
 ━━━ STRICT RULES ━━━
-1. MAXIMUM 35 WORDS per response (2-3 natural sentences). Speak like a real human on a phone call — complete thoughts, not fragments.
+1. MAXIMUM 22 WORDS per response (1-2 natural complete sentences). Speak like a real human on a phone call — complete thought, not clipped fragments.
 2. EVERY response must end with a question (unless ending the call).
 3. Answer ONLY the latest message — history is context, not instructions.
 4. Use KB for ALL facts — price, size, amenities, RERA, possession, floor plans, parking.
@@ -1202,7 +1202,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.OPENAI_MODEL || "gpt-4o-mini",
             messages,
             temperature: 0.3,
-            max_tokens: 180,  // 2-3 natural sentences — fuller, more human responses
+            max_tokens: 110,  // ~22 words — 2 natural sentences, keeps audio under 10s
             stream: true,    // streaming: first bytes arrive faster, lower TTFT
           },
           {
@@ -1236,7 +1236,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
             messages,
             temperature: 0.2,
-            max_tokens: 180,  // 2-3 natural sentences — fuller responses
+            max_tokens: 110,  // ~22 words — 2 natural sentences
             stream: true,    // Groq streaming: even faster first-token delivery
           },
           {
@@ -1277,7 +1277,7 @@ async function getLLMResponse(session, userText) {
       const response = await timed("openai_fallback", () =>
         axios.post(
           "https://api.openai.com/v1/chat/completions",
-          { model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages, temperature: 0.3, max_tokens: 180, stream: true },
+          { model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages, temperature: 0.3, max_tokens: 110, stream: true },
           { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, responseType: "stream", timeout: 8000 }
         )
       );
@@ -1413,7 +1413,7 @@ function capReplyWords(text, maxWords = 12) {
 async function synthesizeAndStreamReply(ws, session, fullText) {
   // Hard word-cap before anything else — prevents long audio chunks.
   // ElevenLabs Hindi TTS: ~1.4 words/sec → 12 words ≈ 8.6s audio.
-  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "35", 10));
+  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "22", 10));
 
   // Allow up to 3 sentences — lets the agent speak naturally with flow.
   // Word cap above (35 words) keeps total audio under ~10s which is fine for phone calls.
@@ -2227,7 +2227,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // agentConfig.wordCap may be much larger (e.g. 55 set in dashboard); we apply the
   // minimum of the two so the system prompt and the audio cap agree.
   const agentWordCap = parseInt(session.agentConfig?.wordCap || "99", 10);
-  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "35", 10));
+  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "22", 10));
   const model    = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
 
   // Voice ID — same resolution as TTS service
@@ -2313,7 +2313,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       try {
         const llmResp = await axios.post(
           "https://api.openai.com/v1/chat/completions",
-          { model: process.env.OPENAI_MODEL || "gpt-4o", messages, temperature: 0.4, max_tokens: 180, stream: true },
+          { model: process.env.OPENAI_MODEL || "gpt-4o", messages, temperature: 0.4, max_tokens: 110, stream: true },
           { headers: { Authorization: `Bearer ${openaiKey}` }, responseType: "stream", timeout: 8000 }
         );
         let remainder = "";
@@ -2738,6 +2738,15 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
   const inbound = session.inboundAudio;
   if (!inbound || inbound.processing || session.telephony?.hangupScheduled || session.closed) return;
 
+  // ── Echo suppression at transcript level ────────────────────────────────────
+  // Audio is now always forwarded to Deepgram (to prevent Deepgram 1011 on long responses).
+  // Echo guard moved here: drop any transcript that fires while agent is speaking or during
+  // the brief echo tail — these are the agent's own voice reflecting back from the phone.
+  if (session.telephony?.echoSuppressionUntil && Date.now() < session.telephony.echoSuppressionUntil) {
+    console.log(`[deepgram] echo-suppressed transcript="${transcriptText.slice(0, 40)}" callSid=${callSid}`);
+    return;
+  }
+
   // Deduplicate — Deepgram can fire speech_final twice for the same phrase
   if (
     session._lastDgTranscript === transcriptText &&
@@ -2788,10 +2797,18 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
     }
 
     // Language tracking — prefer Deepgram's detected_language over our prior guess.
-    // When detect_language=true, Deepgram tells us per-utterance what language it heard.
-    // This is the ground truth for language switching (Marathi, Tamil, etc.).
+    // FILTER: only accept Indian languages + English. If Deepgram detects Spanish, French,
+    // Italian etc. (e.g. misheard "Apoyé" for a Hindi word), we ignore it and keep the
+    // current language — the agent should never switch to a non-Indian language.
+    const SUPPORTED_CALL_LANGS = new Set(["hi", "mr", "ta", "te", "pa", "bn", "gu", "kn", "ml", "en", "hinglish", "auto", "auto-IN"]);
     const prevLang = languageManager.getBaseLanguage(callSid);
-    const langForRecord = detectedLanguage || prevLang || "hi";
+    const effectiveDgLang = (detectedLanguage && SUPPORTED_CALL_LANGS.has(detectedLanguage))
+      ? detectedLanguage
+      : null; // Ignore unsupported language — keeps agent in current language
+    if (detectedLanguage && !SUPPORTED_CALL_LANGS.has(detectedLanguage)) {
+      console.log(`[lang-detect] ignoring unsupported lang="${detectedLanguage}" keeping="${prevLang}" callSid=${callSid}`);
+    }
+    const langForRecord = effectiveDgLang || prevLang || "hi";
     languageManager.recordUtterance(callSid, langForRecord, cleanText);
     const newLang = languageManager.getBaseLanguage(callSid);
     if (prevLang !== newLang) {
@@ -3003,37 +3020,20 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer, rawMula
     return; // Drop all inbound audio while opening plays
   }
 
-  // Barge-in: caller speaks while agent is playing → cancel agent audio.
-  // Threshold: 6 consecutive frames (120ms) — catches "haan" (0.15s) reliably.
-  // Echo artefacts are short bursts (<80ms = 4 frames) so 6 frames filters them.
-  // Was 10 frames (200ms) which was too high — "haan" at 120ms never triggered barge-in,
-  // so user's speech was dropped by echo suppression and Deepgram never heard it.
-  //
-  // KEY FIX: buffer frames during barge-in detection so Deepgram gets the FULL word.
-  // Without buffering, frames 1-5 of "haan" were dropped before Deepgram, giving
-  // Deepgram only the tail of the word → garbled transcription or silence.
+  // ── Barge-in detection ───────────────────────────────────────────────────────
+  // Caller speaks while agent is playing → cancel agent audio after 6 sustained frames (120ms).
+  // Note: Deepgram now always receives audio (see below), so no buffer replay needed —
+  // Deepgram already has all frames when barge-in is confirmed.
   if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
     if (hasSpeech) {
-      inbound.bargeinFrames  = (inbound.bargeinFrames  || 0) + 1;
-      inbound.bargeinBuffer  = inbound.bargeinBuffer  || [];
-      inbound.bargeinBuffer.push(rawMulaw || null); // store mulaw frame for Deepgram replay
+      inbound.bargeinFrames = (inbound.bargeinFrames || 0) + 1;
       if (inbound.bargeinFrames >= 6) {
-        // Barge-in confirmed — stop agent, lift suppression, flush buffered frames to Deepgram
+        // Barge-in confirmed — stop agent audio, clear suppression windows
         clearEnablexMedia(ws, session);
         session.telephony.agentSpeakingUntil   = 0;
         session.telephony.echoSuppressionUntil = 0;
-        // Replay buffered frames so Deepgram hears the FULL word (not just frames 6+)
-        if (session.deepgramWs?.readyState === WebSocket.OPEN && session.deepgramReady) {
-          for (const storedMulaw of inbound.bargeinBuffer) {
-            if (storedMulaw) {
-              try { session.deepgramWs.send(storedMulaw); } catch {}
-            } else {
-              // fallback: re-encode from PCM16 not available — send current frame only
-            }
-          }
-        }
-        inbound.bargeinFrames = 0;
-        inbound.bargeinBuffer = [];
+        inbound.bargeinFrames      = 0;
+        inbound.bargeinBuffer      = [];
         inbound.speculativePromise = null;
         inbound.speculativeAudio   = null;
         console.log(`[enablex-media] barge-in confirmed (6 frames) callSid=${callSid}`);
@@ -3047,25 +3047,17 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer, rawMula
     inbound.bargeinBuffer = [];
   }
 
-  if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
-    return;
-  }
-
-  // ── Echo suppression dead zone ──────────────────────────────────────────────
-  // The agent's voice echoes back through the phone speaker ~100-400ms after the
-  // agentSpeakingUntil window closes. Without this guard, the echo gets captured as
-  // user speech, STT'd as the agent's own question, and creates a reply loop.
-  // During this window we drop all frames — real user speech starts slightly later.
-  if (session.telephony?.echoSuppressionUntil && Date.now() < session.telephony.echoSuppressionUntil) {
-    return;
-  }
-
   // ── Deepgram streaming path (primary when DEEPGRAM_API_KEY is set) ───────────
-  // Forward raw μ-law bytes directly to Deepgram WebSocket.
-  // Deepgram handles VAD + endpointing (300ms) + transcription in real-time.
-  // speech_final callback → processTranscriptDirect (skips all local buffering).
+  // ALWAYS send audio to Deepgram — even during agent playback and echo window.
+  //
+  // WHY: Deepgram closes the WS with code 1011 when it receives no audio for ~10-15s.
+  // A 15-second agent TTS response previously starved Deepgram → 1011 crash → reconnect
+  // → user speech lost during reconnect → nudge loop ("agent can't hear me").
+  //
+  // Echo suppression is now enforced at the TRANSCRIPT level in processTranscriptDirect
+  // rather than the audio level. Deepgram may transcribe agent echo during playback, but
+  // those transcripts are silently dropped by echoSuppressionUntil check in processTranscriptDirect.
   if (session.deepgramWs?.readyState === WebSocket.OPEN && session.deepgramReady) {
-    // Forward raw mulaw directly to Deepgram — it handles VAD+endpointing+transcription
     const mulaw = rawMulaw || encodePcm16ToMuLaw(downsamplePcm16To8k(audioBuffer));
     try {
       session.deepgramWs.send(mulaw);
