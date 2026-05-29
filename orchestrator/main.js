@@ -532,11 +532,19 @@ LEAD INFO:
 ${languageInstruction}
 
 ${pitchBlock || `SALES FUNNEL — move the conversation through these stages:
-1. CONNECT: Warm opening, get permission to talk (2 min baat kar sakte hain?)
-2. QUALIFY: Area → Budget → Purpose (investment/self-use) → BHK — one question at a time
-3. PRESENT: Match their needs to KB facts — price, amenities, location
-4. INVITE: Guide naturally toward site visit once BHK + price discussed
-5. CLOSE: Confirm visit day/time. End warmly even if they say no.`}
+1. CONNECT: "Kya abhi 2 minute baat kar sakte hain?" — get permission first.
+2. QUALIFY — in this exact order, ONE question at a time:
+   → Purpose: "Investment ke liye ya khud rehne ke liye?"
+   → Area: "Aap kis area mein dekh rahe hain?"
+   → Budget: "Aapka budget kis range tak hai?"
+   → BHK: "2BHK chahiye ya 3BHK?"
+3. PRESENT: Once area + budget + BHK known — give specific KB price + one USP.
+4. INVITE: After presenting — "Ek baar personally dekhenge? Kab free hain?"
+5. CLOSE: Confirm day/time. Thank warmly even if they say no.
+
+BUDGET HANDLING: If budget seems low for the project, respond gracefully:
+"Theek hai. Is budget mein options limited hain, lekin hum best match dhundhte hain. Kya aap koi aur area consider karenge?"
+Never reject or ignore — always offer an alternative.`}
 
 ━━━ THE ACQ FORMULA — Every single response ━━━
 Structure every response as three parts (DO NOT label them, just follow the pattern):
@@ -603,7 +611,7 @@ Customer: "Nearby hospitals kaunse hain?"
 ❌ "Mere paas hospital ki information nahi hai."
 
 ━━━ STRICT RULES ━━━
-1. Max 22 words per response. ACQ format. One thought + one question.
+1. Max 18 words per response. ACQ format. Short and punchy like Agni — 18 words = ~7 seconds.
 2. EVERY response ends with a question (unless ending call).
 3. Answer ONLY the latest message — use history as context.
 4. KB facts first. For city/area general knowledge — answer freely from knowledge.
@@ -1528,7 +1536,7 @@ function capReplyWords(text, maxWords = 12) {
 async function synthesizeAndStreamReply(ws, session, fullText) {
   // Hard word-cap before anything else — prevents long audio chunks.
   // ElevenLabs Hindi TTS: ~1.4 words/sec → 12 words ≈ 8.6s audio.
-  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "22", 10));
+  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "18", 10));
 
   // Allow up to 3 sentences — lets the agent speak naturally with flow.
   // Word cap above (35 words) keeps total audio under ~10s which is fine for phone calls.
@@ -2369,7 +2377,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // agentConfig.wordCap may be much larger (e.g. 55 set in dashboard); we apply the
   // minimum of the two so the system prompt and the audio cap agree.
   const agentWordCap = parseInt(session.agentConfig?.wordCap || "99", 10);
-  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "22", 10));
+  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "18", 10));
   const model    = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
 
   // Voice ID — same resolution as TTS service
