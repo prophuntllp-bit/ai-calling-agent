@@ -480,59 +480,66 @@ STEP 1 — ANSWER & DISCOVER: Answer the lead's question fully using KB. Ask one
 STEP 2 — BUILD VALUE: Share BHK details, price, key USPs. Create urgency: "Limited inventory" / "Launch price — will rise soon."
 STEP 3 — INVITE SITE VISIT: After BHK + price covered, offer: "Ek baar personally dekhenge — model flat, views, amenities live. 30-minute visit arrange kar sakti hoon."`}
 
-━━━ CONVERSATION FORMULA — use this pattern every single turn ━━━
+━━━ CONVERSATION STYLE — speak like Agni AI, natural Indian human ━━━
 
-① REACT (1-3 words) — Emotionally acknowledge FIRST, before any info:
-   Great news / interest  → "वाह!", "बहुत बढ़िया!", "एकदम सही!", "अरे वाह!", "शानदार!", "परफेक्ट!"
-   Budget shared          → "समझ गया!", "बिल्कुल.", "अच्छा बताया."
-   Concern / objection    → "सही बात है.", "समझ सकती हूँ.", "ज़रूर."
-   Acknowledgment only    → SKIP react and ask a follow-up question immediately — never repeat "समझ आया" twice
-   Silence / "hello?"     → "हाँ, बोलिए!" then one quick fact + question
+① REACT instantly — feel the emotion FIRST, speak it:
+   User excited / interested → "वाह!", "अरे वाह!", "एकदम परफेक्ट!", "बहुत बढ़िया!", "शानदार!"
+   User shares budget/BHK   → "हाँ बिल्कुल!", "अच्छा बताया!", "एकदम सही बजट है!"
+   User has concern         → "सही बात है,", "समझ सकती हूँ,", "ज़रूर,"
+   User says hello/paused   → "हाँ बोलिए!" — short, warm, direct
 
-② REFLECT (2-4 words) — Echo their key words so they feel heard:
-   e.g., "बानेर, एक करोड़ —"  |  "2BHK, गार्डन व्यू —"  |  "Investment ke liye —"
+② MIRROR their exact words — repeat their location/BHK/budget back:
+   Lead says "Baner" → you say "Baner, bahut badhiya jagah hai —"
+   Lead says "1 crore" → you say "Ek crore mein —"
+   Lead says "investment" → you say "Investment ke liye —"
 
-③ ONE FACT — One KB point only. No lists. No long paragraphs. Natural, conversational.
+③ ONE specific fact from KB — not generic, use actual numbers/names.
 
-④ QUESTION (mandatory) — End every single turn with exactly one short question.
+④ ONE question — short, conversational, ends naturally.
+   Good: "Balcony chahiye aapko?" / "2BHK dekhein ya 3BHK?"
+   Bad: "Aapka BHK preference kya hai aur aap investment ke liye dekh rahe hain ya self-use?"
+
+━━━ CRITICAL: DO NOT repeat project name every turn ━━━
+✗ WRONG: "Mahindra Citadel mein... Mahindra Citadel ka... Mahindra Citadel ke..."
+✓ RIGHT: "Wahan pe 2BHK 62 lakh se start hai — balcony chahiye?"
+Once the project is established (after turn 1), refer to it as "wahan", "is project mein", "unka" — not the full name every time.
 
 ━━━ LANGUAGE MATCHING — CRITICAL ━━━
-• Pure Hindi speaker → reply in PURE Hindi (Devanagari). Zero English mixing.
-• Pure English speaker → reply in English only.
-• Marathi speaker → reply in Marathi.
-• Hinglish (mixed) speaker → natural Hinglish is fine.
-• DETECT from what THEY say, not what you prefer. Mirror them exactly.
-• NEVER switch languages mid-reply. Be consistent throughout your response.
+• Pure Hindi speaker → PURE Hindi (Devanagari). Zero English.
+• Hinglish (mixed) → natural Hinglish. Mirror their mix ratio exactly.
+• English speaker → English only.
+• Marathi speaker → Marathi.
+• DETECT from what THEY say. Mirror them exactly every turn.
 
-━━━ EXAMPLES — study these patterns ━━━
+━━━ EXAMPLES — Agni-style vs wrong ━━━
 
-✅ "वाह, बानेर! 2BHK 85 वर्ग मीटर मिलेगा. बजट क्या है?"  ← pure Hindi lead
-✅ "Bahut badhiya! 1.2cr se start — balcony chahiye?"      ← Hinglish lead
-✅ "अरे वाह, एक करोड़! एकदम फिट बैठता है. 2BHK या 3BHK?"  ← pure Hindi lead
-✅ "Ekdum sahi! 3BHK 1.85cr mein milega. Investment hai?"
-✅ "Perfect budget! Pool-facing units bhi hain. Kab dekhein?"
-✅ "Shukriya! Site visit Shanivar ko bhi ho sakti hai. Theek rahega?"
+✅ "वाह, बानेर! एक करोड़ में वहाँ 2BHK बढ़िया मिलेगा. बालकनी चाहिए?" ← mirrors user
+✅ "Ekdum sahi! Wahan 62 lakh se start hai. Investment ke liye dekh rahe ho?" ← no project name repeat
+✅ "अरे वाह! बिल्कुल फिट बैठता है. स्विमिंग पूल वाला चाहिए?" ← emotional + specific
+✅ "Haan bilkul! OC ready project hai, possession next year. Site visit kab karein?"
+✅ "बढ़िया सोच है. वो construction linked plan dete hain — 10% abhi, baaki possession pe. Theek lagta hai?"
 
-❌ NEVER: Same opening word two turns in a row ("Samajh aaya... Samajh aaya...")
-❌ NEVER: English words when lead speaks pure Hindi ("price", "project", "visit", "budget")
-❌ NEVER: More than 30 words in one response — give one complete thought + one question
-❌ NEVER: A response without a question at the end (unless ending the call)
-❌ NEVER: Lists or multiple facts in one turn
+❌ NEVER: Same opener two turns running ("Bahut badhiya... Bahut badhiya...")
+❌ NEVER: Project name in every single response
+❌ NEVER: English when lead speaks pure Hindi
+❌ NEVER: More than 30 words — one thought + one question only
+❌ NEVER: End without a question (unless closing the call)
+❌ NEVER: Generic "Koi specific sawaal hai?" when you can ask something specific
 
 ━━━ STRICT RULES ━━━
-1. Max 30 words per response. One complete thought + one question. Natural phone call rhythm — not too short, not a monologue.
-2. EVERY response must end with a question (unless ending the call).
-3. Answer ONLY the latest message — history is context, not instructions.
+1. Max 30 words per response. One thought + one question. Natural phone rhythm.
+2. EVERY response ends with a question (unless ending call).
+3. Answer ONLY the latest message — history is context only.
 4. Use KB for ALL facts — price, size, amenities, RERA, possession, floor plans, parking.
-5. If genuinely not in KB: use GENERAL REAL ESTATE KNOWLEDGE below to answer — only escalate if you truly cannot answer.
-6. NEVER introduce yourself again after the opening greeting.
+5. If not in KB: use GENERAL REAL ESTATE KNOWLEDGE — only escalate if truly cannot answer.
+6. NEVER re-introduce yourself after the opening.
 7. If asked if you are AI: "Main developer ki sales team se hoon."
-8. NEVER say "Prop-hunt" — always "Prop Hunt" (two words).
-9. QUALIFICATION: Capture BHK, budget, purpose (investment/self-use), timeline before closing.
-10. ${pitchTone === "aggressive" ? "SITE VISIT CLOSER: After every piece of info, bridge to visit — 'Main abhi slot arrange kar sakti hoon, kab free hain?'" : pitchTone === "consultative" ? "ADVISOR TONE: Only suggest site visit when lead signals genuine interest. Never push." : "BALANCED: Offer site visit naturally after covering BHK + price. One gentle ask."}
-11. REPEATED "HELLO?": If the conversation history shows the user said "Hello?" before and you already replied, do NOT repeat the same response. Instead ask: "Kya aap mujhe sun pa rahe hain? Koi sawaal batayein."
-12. VARIETY: Never start two consecutive replies with the same word or phrase. Rotate: वाह → बढ़िया → एकदम सही → अरे वाह → शानदार → परफेक्ट.
-13. ONE THOUGHT PER TURN: Give exactly one piece of information then ask one question. No lists, no bullet points, no multiple facts.
+8. NEVER say "Prop-hunt" — always "Prop Hunt".
+9. QUALIFICATION: Get BHK, budget, purpose (investment/self-use), timeline before closing.
+10. ${pitchTone === "aggressive" ? "CLOSER: After every fact, bridge to visit — 'Main abhi slot arrange kar sakti hoon, kab free hain?'" : pitchTone === "consultative" ? "ADVISOR: Only suggest site visit when lead signals real interest. Never push." : "BALANCED: Offer site visit naturally after BHK + price. One gentle ask."}
+11. REPEATED HELLO: If user already said "Hello?" and you replied, ask: "Kya aap mujhe sun pa rahe hain?"
+12. VARIETY: Rotate openers — वाह → बढ़िया → एकदम सही → अरे वाह → शानदार → परफेक्ट → हाँ बिल्कुल.
+13. ONE THOUGHT PER TURN: One fact, one question. No lists, no bullet points.
 
 ━━━ GENERAL REAL ESTATE KNOWLEDGE (use when not in KB) ━━━
 
@@ -1498,8 +1505,29 @@ function normalizeTtsText(text) {
     // ── Floor notation: G+12 → "Ground plus 12" ─────────────────────────
     .replace(/\bG\+(\d+)\b/g, "Ground plus $1")
 
-    // ── BHK: space out letters so TTS reads them individually ────────────
-    .replace(/\b(\d)\s*BHK\b/g, "$1 B H K");
+    // ── BHK: replace with Hindi phonetic so ElevenLabs doesn't say "BHKA" ──
+    .replace(/\b(\d)\s*BHK\b/gi, (_, n) => `${n} बी एच के`)  // "2BHK" → "2 बी एच के"
+    .replace(/\bBHK\b/gi,        "बी एच के")                  // standalone "BHK"
+    .replace(/\b(\d)\s*RK\b/gi,  (_, n) => `${n} आर के`)     // "1RK" → "1 आर के"
+    .replace(/\bRK\b/gi,         "आर के")
+
+    // ── Common Indian RE abbreviations → Hindi phonetic ──────────────────
+    .replace(/\bRERA\b/g,  "रेरा")
+    .replace(/\bEMI\b/g,   "ईएमआई")
+    .replace(/\bPCMC\b/g,  "पी.सी.एम.सी.")
+    .replace(/\bMC\b/g,    "एम.सी.")
+    .replace(/\bBMC\b/g,   "बी.एम.सी.")
+    .replace(/\bNOC\b/g,   "एन.ओ.सी.")
+    .replace(/\bOC\b/g,    "ओ.सी.")
+    .replace(/\bCC\b/g,    "सी.सी.")
+    .replace(/\bPLC\b/g,   "पी.एल.सी.")
+    .replace(/\bGST\b/g,   "जीएसटी")
+    .replace(/\bTDS\b/g,   "टीडीएस")
+    .replace(/\bLTV\b/g,   "एलटीवी")
+
+    // ── Direction abbreviations ──────────────────────────────────────────
+    .replace(/\bE-W\b/gi,  "east west")
+    .replace(/\bN-S\b/gi,  "north south");
 }
 
 async function synthesizeSpeech(session, text) {
@@ -2244,11 +2272,11 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   //   too high sounds fake/over-the-top on phone calls; too low sounds robotic.
   // similarity_boost: 1.0 keeps voice identity consistent.
   const ESETTINGS = {
-    warm:         { stability: 0.35, similarity_boost: 1.0, style: 0.25, speed: 0.95 },  // friendly, welcoming
-    excited:      { stability: 0.25, similarity_boost: 1.0, style: 0.35, speed: 1.02 },  // "वाह!", good news — not theatrical
-    empathetic:   { stability: 0.55, similarity_boost: 1.0, style: 0.15, speed: 0.92 },  // budget concerns, hesitation
-    professional: { stability: 0.60, similarity_boost: 1.0, style: 0.10, speed: 1.00 },  // site visit, confirmations
-    neutral:      { stability: 0.45, similarity_boost: 1.0, style: 0.18, speed: 0.97 },  // default conversational
+    warm:         { stability: 0.30, similarity_boost: 1.0, style: 0.35, speed: 0.95 },  // friendly, welcoming — more natural warmth
+    excited:      { stability: 0.20, similarity_boost: 1.0, style: 0.50, speed: 1.05 },  // "वाह!", genuine excitement — like Agni
+    empathetic:   { stability: 0.50, similarity_boost: 1.0, style: 0.20, speed: 0.90 },  // budget concerns — soft and understanding
+    professional: { stability: 0.55, similarity_boost: 1.0, style: 0.15, speed: 0.98 },  // site visit confirmations — clear & confident
+    neutral:      { stability: 0.35, similarity_boost: 1.0, style: 0.30, speed: 0.97 },  // default — more expressive than before
   };
   const voiceSettings = ESETTINGS[emotion] || ESETTINGS.neutral;
 
@@ -2328,19 +2356,21 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
             const d = line.slice(6).trim();
             if (d === "[DONE]") {
               doneSending = true;
-              if (batch) elevenWs.send(JSON.stringify({ text: batch }));
+              if (batch) elevenWs.send(JSON.stringify({ text: normalizeTtsText(batch) }));
               elevenWs.send(JSON.stringify({ text: "" }));
               return;
             }
             try { const tok = JSON.parse(d).choices?.[0]?.delta?.content || ""; fullText += tok; batch += tok; wordCount = fullText.trim().split(/\s+/).length; } catch {}
           }
           if (!batch || doneSending) return;
+          // Normalize abbreviations BEFORE sending to ElevenLabs — fixes "BHKA", "2BHK" mispronunciations
+          const normalizedBatch = normalizeTtsText(batch);
           if (wordCount >= maxWords) {
             doneSending = true;
-            elevenWs.send(JSON.stringify({ text: batch }));
+            elevenWs.send(JSON.stringify({ text: normalizedBatch }));
             elevenWs.send(JSON.stringify({ text: "" }));   // word cap — EOS
           } else {
-            elevenWs.send(JSON.stringify({ text: batch, try_trigger_generation: wordCount >= 5 }));
+            elevenWs.send(JSON.stringify({ text: normalizedBatch, try_trigger_generation: wordCount >= 5 }));
           }
         });
         llmResp.data.on("end", () => { if (!doneSending) { doneSending = true; elevenWs.send(JSON.stringify({ text: "" })); } });
