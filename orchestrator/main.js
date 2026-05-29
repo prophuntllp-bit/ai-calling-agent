@@ -522,12 +522,12 @@ Once the project is established (after turn 1), refer to it as "wahan", "is proj
 ❌ NEVER: Same opener two turns running ("Bahut badhiya... Bahut badhiya...")
 ❌ NEVER: Project name in every single response
 ❌ NEVER: English when lead speaks pure Hindi
-❌ NEVER: More than 30 words — one thought + one question only
+❌ NEVER: More than 22 words — Hindi TTS is slow, 22 words = 8 seconds on a phone call
 ❌ NEVER: End without a question (unless closing the call)
 ❌ NEVER: Generic "Koi specific sawaal hai?" when you can ask something specific
 
 ━━━ STRICT RULES ━━━
-1. Max 30 words per response. One thought + one question. Natural phone rhythm.
+1. Max 22 words per response. One thought + one question. Hindi words are long — 22 words = 8 seconds.
 2. EVERY response ends with a question (unless ending call).
 3. Answer ONLY the latest message — history is context only.
 4. Use KB for ALL facts — price, size, amenities, RERA, possession, floor plans, parking.
@@ -1420,7 +1420,7 @@ function capReplyWords(text, maxWords = 12) {
 async function synthesizeAndStreamReply(ws, session, fullText) {
   // Hard word-cap before anything else — prevents long audio chunks.
   // ElevenLabs Hindi TTS: ~1.4 words/sec → 12 words ≈ 8.6s audio.
-  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "30", 10));
+  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "22", 10));
 
   // Allow up to 3 sentences — lets the agent speak naturally with flow.
   // Word cap above (35 words) keeps total audio under ~10s which is fine for phone calls.
@@ -2255,7 +2255,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // agentConfig.wordCap may be much larger (e.g. 55 set in dashboard); we apply the
   // minimum of the two so the system prompt and the audio cap agree.
   const agentWordCap = parseInt(session.agentConfig?.wordCap || "99", 10);
-  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "30", 10));
+  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "22", 10));
   const model    = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
 
   // Voice ID — same resolution as TTS service
@@ -2482,7 +2482,7 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     // Allow common single-word responses through — both conversational words AND real-estate
     // keywords. "इन्वेस्टमेंट।" / "बजट।" / "2BHK।" are valid answers to agent questions.
     // "हैलो" / "हेलो" are both common spellings of "hello" in Hindi.
-    const VALID_ONE_WORD = /^(haan|ha|ji|nahi|nahin|theek|ok|okay|yes|no|done|bilkul|zaroor|sure|accha|achha|acha|bye|hello|हाँ|हां|जी|नहीं|नहि|ठीक|ओके|बिल्कुल|ज़रूर|अच्छा|हेलो|हैलो|नमस्ते|namaste|investment|invest|इन्वेस्टमेंट|budget|बजट|project|प्रोजेक्ट|location|लोकेशन|bhk|2bhk|3bhk|1bhk|price|प्राइस|visit|विजिट|interested|interest|possession|पोज़ेशन|possession|rera|amenities|loan|emi|flat|apartment|floor|parking|garden|pool|balcony|view|classic|prime|luxury|affordable|connectivity|kab|कब|kitna|kitni|कितना|कितनी|कहाँ|kahan|kaun|कौन|kya|क्या|kyun|क्यों|dekhna|देखना|batao|बताओ|batayein|बताइए|samjhao|समझाओ|chahiye|चाहिए|lena|लेना|invest|कहाँ|weekend|weekday|saturday|sunday|morning|evening)$/i;
+    const VALID_ONE_WORD = /^(haan|ha|ji|nahi|nahin|theek|ok|okay|yes|no|done|bilkul|zaroor|sure|accha|achha|acha|bye|hello|हाँ|हां|जी|नहीं|नहि|ठीक|ओके|बिल्कुल|ज़रूर|अच्छा|हेलो|हैलो|नमस्ते|namaste|oh|ओह|वाह|wah|waah|हम्म|hmm|हाँ|अरे|arre|oho|ओहो|sahi|सही|perfect|परफेक्ट|badhiya|बढ़िया|shandar|शानदार|investment|invest|इन्वेस्टमेंट|budget|बजट|project|प्रोजेक्ट|location|लोकेशन|bhk|2bhk|3bhk|1bhk|4bhk|price|प्राइस|visit|विजिट|interested|interest|possession|पोज़ेशन|rera|amenities|loan|emi|flat|apartment|floor|parking|garden|pool|balcony|view|classic|prime|luxury|affordable|connectivity|kab|कब|kitna|kitni|कितना|कितनी|कहाँ|kahan|kaun|कौन|kya|क्या|kyun|क्यों|dekhna|देखना|batao|बताओ|batayein|बताइए|samjhao|समझाओ|chahiye|चाहिए|lena|लेना|invest|weekend|weekday|saturday|sunday|morning|evening|hoy|होय|naahi|नाही|mala|मला|chan|छान|baro|बरो)$/i;
     if (wordCount === 1 && !VALID_ONE_WORD.test(transcription.text.trim().replace(/[।!?.…,]/g, ""))) {
       console.log(`[enablex-media] skipping 1-word noise callSid=${callSid} text="${transcription.text}"`);
       return;
