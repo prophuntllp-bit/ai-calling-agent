@@ -515,12 +515,12 @@ STEP 3 — INVITE SITE VISIT: After BHK + price covered, offer: "Ek baar persona
 
 ❌ NEVER: Same opening word two turns in a row ("Samajh aaya... Samajh aaya...")
 ❌ NEVER: English words when lead speaks pure Hindi ("price", "project", "visit", "budget")
-❌ NEVER: More than 45 words in one response — give complete, natural answers
+❌ NEVER: More than 30 words in one response — give one complete thought + one question
 ❌ NEVER: A response without a question at the end (unless ending the call)
 ❌ NEVER: Lists or multiple facts in one turn
 
 ━━━ STRICT RULES ━━━
-1. Speak naturally — complete thoughts, not clipped fragments. Give complete answers. End with one question.
+1. Max 30 words per response. One complete thought + one question. Natural phone call rhythm — not too short, not a monologue.
 2. EVERY response must end with a question (unless ending the call).
 3. Answer ONLY the latest message — history is context, not instructions.
 4. Use KB for ALL facts — price, size, amenities, RERA, possession, floor plans, parking.
@@ -1413,7 +1413,7 @@ function capReplyWords(text, maxWords = 12) {
 async function synthesizeAndStreamReply(ws, session, fullText) {
   // Hard word-cap before anything else — prevents long audio chunks.
   // ElevenLabs Hindi TTS: ~1.4 words/sec → 12 words ≈ 8.6s audio.
-  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "55", 10));
+  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "30", 10));
 
   // Allow up to 3 sentences — lets the agent speak naturally with flow.
   // Word cap above (35 words) keeps total audio under ~10s which is fine for phone calls.
@@ -2227,7 +2227,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // agentConfig.wordCap may be much larger (e.g. 55 set in dashboard); we apply the
   // minimum of the two so the system prompt and the audio cap agree.
   const agentWordCap = parseInt(session.agentConfig?.wordCap || "99", 10);
-  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "55", 10));
+  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "30", 10));
   const model    = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
 
   // Voice ID — same resolution as TTS service
@@ -2449,8 +2449,11 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
       console.log(`[enablex-media] skipping empty transcription callSid=${callSid}`);
       return;
     }
-    const VALID_ONE_WORD = /^(haan|ha|ji|nahi|nahin|theek|ok|okay|yes|no|done|bilkul|zaroor|sure|accha|achha|acha|bye|hello|हाँ|हां|जी|नहीं|नहि|ठीक|ओके|बिल्कुल|ज़रूर|अच्छा|हेलो)$/i;
-    if (wordCount === 1 && !VALID_ONE_WORD.test(transcription.text.trim().replace(/[।!?.]/g, ""))) {
+    // Allow common single-word responses through — both conversational words AND real-estate
+    // keywords. "इन्वेस्टमेंट।" / "बजट।" / "2BHK।" are valid answers to agent questions.
+    // "हैलो" / "हेलो" are both common spellings of "hello" in Hindi.
+    const VALID_ONE_WORD = /^(haan|ha|ji|nahi|nahin|theek|ok|okay|yes|no|done|bilkul|zaroor|sure|accha|achha|acha|bye|hello|हाँ|हां|जी|नहीं|नहि|ठीक|ओके|बिल्कुल|ज़रूर|अच्छा|हेलो|हैलो|नमस्ते|namaste|investment|invest|इन्वेस्टमेंट|budget|बजट|project|प्रोजेक्ट|location|लोकेशन|bhk|2bhk|3bhk|1bhk|price|प्राइस|visit|विजिट|interested|interest|possession|पोज़ेशन|possession|rera|amenities|loan|emi|flat|apartment|floor|parking|garden|pool|balcony|view|classic|prime|luxury|affordable|connectivity|kab|कब|kitna|kitni|कितना|कितनी|कहाँ|kahan|kaun|कौन|kya|क्या|kyun|क्यों|dekhna|देखना|batao|बताओ|batayein|बताइए|samjhao|समझाओ|chahiye|चाहिए|lena|लेना|invest|कहाँ|weekend|weekday|saturday|sunday|morning|evening)$/i;
+    if (wordCount === 1 && !VALID_ONE_WORD.test(transcription.text.trim().replace(/[।!?.…,]/g, ""))) {
       console.log(`[enablex-media] skipping 1-word noise callSid=${callSid} text="${transcription.text}"`);
       return;
     }
