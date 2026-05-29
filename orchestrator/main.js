@@ -396,7 +396,51 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function buildSystemPrompt(lead, knowledgeContext, language, agentConfig = {}) {
+// Extract qualification facts from user transcripts in real-time.
+// Called on every utterance so the agent always has up-to-date session memory.
+function extractQualification(text, session) {
+  if (!session.qualification) {
+    session.qualification = { bhk: null, budget: null, purpose: null, timeline: null };
+  }
+  const q = session.qualification;
+  const t = (text || "").toLowerCase();
+
+  // Purpose: investment vs self-use
+  if (!q.purpose) {
+    if (/invest|गुंतवणूक|निवेश|rental|rent|kiraya|किराया/.test(t)) q.purpose = "investment";
+    else if (/khud|apne liye|self.use|खुद|apna ghar|स्वयं|rehne ke liye|rahen/.test(t)) q.purpose = "self-use";
+  }
+
+  // BHK preference
+  if (!q.bhk) {
+    const bhkM = text.match(/(\d)\s*(?:BHK|बीएचके|बी\s*एच\s*के|bedroom|b\.?h\.?k)/i)
+                || text.match(/(?:teen|three|3|तीन)\s*(?:BHK|bedroom|बीएचके)/i)
+                || text.match(/(?:do|two|2|दो)\s*(?:BHK|bedroom|बीएचके)/i)
+                || text.match(/(?:ek|one|1|एक)\s*(?:BHK|bedroom|बीएचके)/i);
+    if (bhkM) {
+      const raw = bhkM[1] || bhkM[0];
+      const n = /teen|three|3|तीन/.test(raw) ? "3" : /do|two|2|दो/.test(raw) ? "2" : /ek|one|1|एक/.test(raw) ? "1" : raw;
+      q.bhk = `${n}BHK`;
+    }
+  }
+
+  // Budget
+  if (!q.budget) {
+    const croreM = text.match(/(\d+(?:\.\d+)?)\s*(?:crore|cr\.?\b|करोड़|कोटी)/i);
+    const lakhM  = text.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख|लख)/i);
+    if (croreM) q.budget = `${croreM[1]} crore`;
+    else if (lakhM) q.budget = `${lakhM[1]} lakh`;
+  }
+
+  // Timeline
+  if (!q.timeline) {
+    if (/immediately|abhi|turant|jaldi|6 month|6 mahine|this year|is saal/.test(t)) q.timeline = "immediate";
+    else if (/next year|agle saal|1 year|1 साल|2026/.test(t)) q.timeline = "next year";
+    else if (/2.*3 year|2-3|baad mein|later/.test(t)) q.timeline = "2-3 years";
+  }
+}
+
+function buildSystemPrompt(lead, knowledgeContext, language, agentConfig = {}, qualification = {}) {
   const hasKB = knowledgeContext && knowledgeContext.trim().length > 30;
   const kbBlock = hasKB
     ? `PROJECT KNOWLEDGE BASE — Answer ALL questions directly from this. Never say "I will check" or "let me verify":\n${knowledgeContext}`
@@ -592,6 +636,18 @@ PLC (Preferential Location Charges): Corner unit, garden facing, road facing, cl
 POSSESSION TIMELINE: Under-construction projects mein builder typically 2-3 year timeline deta hai. RERA completion date mention hoti hai. Grace period 6 months allowed hai. Delay hone par builder ko interest pay karna padta hai (typically SBI MCLR + 2%).
 
 INVESTMENT vs SELF-USE: Investment ke liye rental yield (typically 2-3% in metros) aur capital appreciation dekhein. Self-use ke liye connectivity, school/hospital proximity, builder track record important hai.
+
+${(() => {
+  const q = qualification || {};
+  const known = [
+    q.purpose  && `Purpose: ${q.purpose}`,
+    q.bhk      && `BHK preference: ${q.bhk}`,
+    q.budget   && `Budget: ${q.budget}`,
+    q.timeline && `Timeline: ${q.timeline}`,
+  ].filter(Boolean);
+  if (!known.length) return "";
+  return `\n━━━ LEAD PROFILE — ALREADY CAPTURED (DO NOT RE-ASK) ━━━\n${known.join("\n")}\nUse this to move the conversation FORWARD. Reference it naturally instead of asking again.\nExample: "${q.purpose === "investment" ? "Investment ke liye best option hai yahan" : "Khud rehne ke liye perfect hai yeh project"}${q.bhk ? ` — ${q.bhk}` : ""}${q.budget ? ` aur ${q.budget} budget mein` : ""} fit baithta hai."\n`;
+})()}
 
 Return this JSON silently when closing:
 OUTCOME:{"status":"interested","site_visit":false,"callback_date":null,"qualification":{"bhk":"","budget_range":"","purpose":"","timeline":""},"notes":""}`;
@@ -1165,7 +1221,7 @@ async function getLLMResponse(session, userText) {
     ? (languageManager.getBaseLanguage(session.callSid) || "hi")
     : language;
 
-  const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {});
+  const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
 
   // Send last 5 turns (10 messages) — needed for longer conversations (8+ min calls)
   // so agent remembers investment/BHK/budget stated early in the call.
@@ -2325,8 +2381,8 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   const resolvedLanguage = (language === "auto" || language === "auto-IN" || !language)
     ? (languageManager.getBaseLanguage(callSid) || "hi")
     : language;
-  const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {});
-  const historyContext = session.history.slice(-6).slice(0, -1);
+  const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
+  const historyContext = session.history.slice(-10).slice(0, -1);
   const messages = [
     { role: "system", content: systemPrompt },
     ...historyContext,
@@ -2582,6 +2638,12 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     if (prevLang !== newLang) {
       console.log(`[lang-detect] language switched ${prevLang} → ${newLang} callSid=${callSid}`);
     }
+    // Extract qualification facts from this utterance — persists across entire call
+    extractQualification(cleanText, session);
+    if (session.qualification && Object.values(session.qualification).some(Boolean)) {
+      console.log(`[qualification] callSid=${callSid}`, JSON.stringify(session.qualification));
+    }
+
     session.stage = "qualification";
     // Upgrade status so dashboard shows call is active (not stuck at stream_started)
     if (session.status === "stream_started") session.status = "active";
