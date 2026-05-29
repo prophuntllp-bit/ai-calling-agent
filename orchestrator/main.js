@@ -2495,12 +2495,14 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     // Pipes LLM tokens directly to ElevenLabs WS — audio starts before LLM finishes.
     // This is the same fast path used by the Deepgram pipeline.
     // Fallback to REST-per-sentence if ElevenLabs streaming is unavailable.
-    const elevenStreamed = await streamLLMToElevenLabs(ws, session, cleanText, () => {
-      // Release processing lock when first audio fires — allows barge-in during playback
-      if (session.inboundAudio) {
-        session.inboundAudio.processing  = false;
-        session.inboundAudio.lastFlushAt = Date.now();
-      }
+    const elevenStreamed = await streamingLLMWithElevenLabs(ws, session, cleanText, {
+      onFirstAudio: () => {
+        // Release processing lock when first audio fires — allows barge-in during playback
+        if (session.inboundAudio) {
+          session.inboundAudio.processing  = false;
+          session.inboundAudio.lastFlushAt = Date.now();
+        }
+      },
     });
     if (elevenStreamed !== null) {
       console.log(`[agent] streaming callSid=${callSid} total=${Date.now()-t0}ms reply="${(elevenStreamed||"").slice(0,60)}"`);
