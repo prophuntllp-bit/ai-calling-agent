@@ -2582,7 +2582,7 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
       console.log(`[agent] streaming callSid=${callSid} total=${Date.now()-t0}ms reply="${(elevenStreamed||"").slice(0,60)}"`);
       // Schedule silence nudge (mirrors processTranscriptDirect behaviour)
       const nudgeLang = languageManager.getBaseLanguage(callSid) || "hi";
-      const nudgeDelay = parseInt(process.env.SILENCE_NUDGE_MS || "15000", 10);
+      const nudgeDelay = parseInt(process.env.SILENCE_NUDGE_MS || "22000", 10);
       const scheduleNudge = () => {
         const echoEnd = session.telephony?.echoSuppressionUntil || 0;
         const delay = Math.max(0, echoEnd - Date.now()) + nudgeDelay;
