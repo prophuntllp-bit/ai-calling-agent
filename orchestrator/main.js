@@ -515,12 +515,12 @@ STEP 3 — INVITE SITE VISIT: After BHK + price covered, offer: "Ek baar persona
 
 ❌ NEVER: Same opening word two turns in a row ("Samajh aaya... Samajh aaya...")
 ❌ NEVER: English words when lead speaks pure Hindi ("price", "project", "visit", "budget")
-❌ NEVER: More than 22 words in one response (2 natural sentences max)
+❌ NEVER: More than 45 words in one response — give complete, natural answers
 ❌ NEVER: A response without a question at the end (unless ending the call)
 ❌ NEVER: Lists or multiple facts in one turn
 
 ━━━ STRICT RULES ━━━
-1. MAXIMUM 22 WORDS per response (1-2 natural complete sentences). Speak like a real human on a phone call — complete thought, not clipped fragments.
+1. Speak naturally — complete thoughts, not clipped fragments. Give complete answers. End with one question.
 2. EVERY response must end with a question (unless ending the call).
 3. Answer ONLY the latest message — history is context, not instructions.
 4. Use KB for ALL facts — price, size, amenities, RERA, possession, floor plans, parking.
@@ -1202,7 +1202,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.OPENAI_MODEL || "gpt-4o-mini",
             messages,
             temperature: 0.3,
-            max_tokens: 110,  // ~22 words — 2 natural sentences, keeps audio under 10s
+            max_tokens: 200,  // ~45 words — complete natural answers
             stream: true,    // streaming: first bytes arrive faster, lower TTFT
           },
           {
@@ -1236,7 +1236,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
             messages,
             temperature: 0.2,
-            max_tokens: 110,  // ~22 words — 2 natural sentences
+            max_tokens: 200,  // ~45 words — complete natural answers
             stream: true,    // Groq streaming: even faster first-token delivery
           },
           {
@@ -1413,7 +1413,7 @@ function capReplyWords(text, maxWords = 12) {
 async function synthesizeAndStreamReply(ws, session, fullText) {
   // Hard word-cap before anything else — prevents long audio chunks.
   // ElevenLabs Hindi TTS: ~1.4 words/sec → 12 words ≈ 8.6s audio.
-  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "22", 10));
+  const capped = capReplyWords(fullText, parseInt(process.env.TTS_MAX_WORDS || "55", 10));
 
   // Allow up to 3 sentences — lets the agent speak naturally with flow.
   // Word cap above (35 words) keeps total audio under ~10s which is fine for phone calls.
@@ -2227,7 +2227,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // agentConfig.wordCap may be much larger (e.g. 55 set in dashboard); we apply the
   // minimum of the two so the system prompt and the audio cap agree.
   const agentWordCap = parseInt(session.agentConfig?.wordCap || "99", 10);
-  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "22", 10));
+  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "55", 10));
   const model    = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
 
   // Voice ID — same resolution as TTS service
@@ -2491,6 +2491,57 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     // Upgrade status so dashboard shows call is active (not stuck at stream_started)
     if (session.status === "stream_started") session.status = "active";
 
+    // ── ElevenLabs streaming path (low-latency, TTFA ~800ms) ──────────────────
+    // Pipes LLM tokens directly to ElevenLabs WS — audio starts before LLM finishes.
+    // This is the same fast path used by the Deepgram pipeline.
+    // Fallback to REST-per-sentence if ElevenLabs streaming is unavailable.
+    const elevenStreamed = await streamLLMToElevenLabs(ws, session, cleanText, () => {
+      // Release processing lock when first audio fires — allows barge-in during playback
+      if (session.inboundAudio) {
+        session.inboundAudio.processing  = false;
+        session.inboundAudio.lastFlushAt = Date.now();
+      }
+    });
+    if (elevenStreamed !== null) {
+      console.log(`[agent] streaming callSid=${callSid} total=${Date.now()-t0}ms reply="${(elevenStreamed||"").slice(0,60)}"`);
+      // Schedule silence nudge (mirrors processTranscriptDirect behaviour)
+      const nudgeLang = languageManager.getBaseLanguage(callSid) || "hi";
+      const nudgeDelay = parseInt(process.env.SILENCE_NUDGE_MS || "15000", 10);
+      const scheduleNudge = () => {
+        const echoEnd = session.telephony?.echoSuppressionUntil || 0;
+        const delay = Math.max(0, echoEnd - Date.now()) + nudgeDelay;
+        const turnToken = session._lastTurnAt;
+        setTimeout(() => {
+          if (session._lastTurnAt !== turnToken || session.closed || session.telephony?.hangupScheduled) return;
+          session.nudgesSent = (session.nudgesSent || 0) + 1;
+          const MAX_NUDGES = parseInt(process.env.MAX_SILENCE_NUDGES || "3", 10);
+          if (session.nudgesSent > MAX_NUDGES) {
+            const byeText = nudgeLang === "hi" || nudgeLang === "hinglish"
+              ? "Main baad mein call karti hoon. Dhanyawaad! Namaste."
+              : "I'll call you back later. Thank you. Goodbye.";
+            synthesizeSpeech(session, byeText).then(audio => {
+              if (audio && ws.readyState === 1) sendEnablexMedia(ws, session, audio, "nudge-bye");
+            });
+            scheduleAgentSideHangup(ws, session, "silence-timeout");
+            return;
+          }
+          const nudgeText = nudgeLang === "hi" || nudgeLang === "hinglish"
+            ? (session.nudgesSent === 1 ? "Haan? Koi sawaal hai toh batayein, main hoon yahan." : "Lagta hai aap busy hain — kab call karein aapko?")
+            : (session.nudgesSent === 1 ? "Are you there? Feel free to ask anything." : "You seem busy — when would be a better time to call?");
+          synthesizeSpeech(session, nudgeText).then(audio => {
+            if (audio && ws.readyState === 1 && !session.closed) {
+              clearEnablexMedia(ws, session);
+              sendEnablexMedia(ws, session, audio, "nudge");
+            }
+          });
+        }, delay);
+      };
+      session._lastTurnAt = Date.now();
+      setTimeout(scheduleNudge, 200);
+      return;
+    }
+
+    // ── Fallback: REST LLM + sentence-by-sentence TTS ─────────────────────────
     const t1 = Date.now();
     const reply = await getLLMResponse(session, transcription.text);
     console.log(`[agent] callSid=${callSid} llm=${Date.now()-t1}ms total_to_llm=${Date.now()-t0}ms reply="${reply.slice(0,60)}"`);
