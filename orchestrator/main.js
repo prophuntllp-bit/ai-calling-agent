@@ -539,19 +539,22 @@ ${pitchBlock || `SALES FUNNEL — move the conversation through these stages:
 5. CLOSE: Confirm visit day/time. End warmly even if they say no.`}
 
 ━━━ THE ACQ FORMULA — Every single response ━━━
-A = ACKNOWLEDGE their answer (1-3 words, warm, varied)
-C = COMMENT (one natural observation about what they said)
-Q = QUESTION (one short question to move forward)
+Structure every response as three parts (DO NOT label them, just follow the pattern):
+1. Warm acknowledgment (1-3 words)
+2. One natural comment or fact
+3. One short question
 
-Example of ACQ:
+CORRECT EXAMPLES — study this exact format:
 Customer: "Pune West mein."
-Agent: "Bahut badhiya. [A] Pune West investment ke liye kaafi demand mein hai. [C] Aapka budget kis range tak hai? [Q]"
+Agent: "Bahut badhiya. Pune West investment ke liye kaafi demand mein hai. Aapka budget kis range tak hai?"
 
 Customer: "Investment ke liye."
-Agent: "Samajh gaya. [A] Investment ke liye rental yield aur appreciation dono important hain. [C] Kaunsa BHK dekh rahe hain? [Q]"
+Agent: "Samajh gaya. Investment ke liye rental yield aur appreciation dono important hain. Kaunsa BHK dekh rahe hain?"
 
 Customer: "3BHK."
-Agent: "Perfect. [A] 3BHK wahan 85 lakh se start hota hai. [C] Balcony chahiye ya pool-facing prefer karenge? [Q]"
+Agent: "Perfect. 3BHK wahan 85 lakh se start hota hai. Balcony chahiye ya pool-facing prefer karenge?"
+
+WRONG — never output bracket labels like [A], [C], [Q] in your response. Those are just internal instructions for you, not words to speak.
 
 ━━━ FILLER WORD ROTATION — use each, rotate, never repeat same twice in a row ━━━
 Rotate through: Bahut badhiya → Bilkul → Achha → Samajh gaya → Zaroor → Theek hai → Dekhiye → Koi baat nahi → Sahi baat hai → Perfect
@@ -1603,6 +1606,12 @@ function normalizeTtsText(text) {
     // e.g. "1.5Cr" → "1.5 crore",  "80L" / "80 lac" → "80 lakh"
     .replace(/\b(\d+(?:\.\d+)?)\s*[Cc]r\.?\b/g,           "$1 crore")
     .replace(/\b(\d+(?:\.\d+)?)\s*[Ll](?:ac|akh)?\.?\b/g, "$1 lakh")
+
+    // ── Number ranges: "54–70" / "54-70" / "54 to 70" → "54 se 70" ────────
+    // ElevenLabs reads en-dash as "minus" — replace with natural Hindi "se"
+    .replace(/(\d+(?:\.\d+)?)\s*[–—-]\s*(\d+(?:\.\d+)?)\s*(lakh|crore|lac|लाख|करोड़|L\b|Cr\b)/gi,
+             (_, a, b, unit) => `${a} se ${b} ${unit}`)
+    .replace(/(\d+(?:\.\d+)?)\s*[–—]\s*(\d+(?:\.\d+)?)/g, "$1 se $2")
 
     // ── Percentage ───────────────────────────────────────────────────────
     .replace(/(\d)\s*%/g, "$1 percent")
