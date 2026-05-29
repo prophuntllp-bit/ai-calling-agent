@@ -2568,6 +2568,12 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
 //
 // Set DEEPGRAM_API_KEY env var to enable. Falls back to local VAD+STT if unset.
 function openDeepgramStream(ws, session, callSid) {
+  // Hard disable — set DEEPGRAM_ENABLED=false to use local Whisper STT instead.
+  // Local STT handles Indian accents + Hinglish better than Deepgram nova-2-general.
+  if (process.env.DEEPGRAM_ENABLED === "false") {
+    console.log(`[deepgram] disabled via DEEPGRAM_ENABLED=false — using local STT callSid=${callSid}`);
+    return null;
+  }
   const dgKey = process.env.DEEPGRAM_API_KEY;
   if (!dgKey) {
     console.log(`[deepgram] DEEPGRAM_API_KEY not set — using local STT pipeline callSid=${callSid}`);
@@ -3068,6 +3074,17 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer, rawMula
       // Fall through to local pipeline below on this frame
     }
     if (session.deepgramWs) return;  // Deepgram owns this frame
+  }
+
+  // ── Local STT path: echo suppression at audio level ─────────────────────────
+  // Deepgram handles echo suppression at transcript level (processTranscriptDirect).
+  // Local STT has no transcript-level guard — must drop frames here to prevent
+  // the agent's own voice from being sent to local VAD and re-transcribed.
+  if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
+    return;
+  }
+  if (session.telephony?.echoSuppressionUntil && Date.now() < session.telephony.echoSuppressionUntil) {
+    return;
   }
 
   // ── Local VAD + silence detection (fallback when Deepgram is not available) ──
