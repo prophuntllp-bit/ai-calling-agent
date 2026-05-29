@@ -611,7 +611,7 @@ Customer: "Nearby hospitals kaunse hain?"
 ❌ "Mere paas hospital ki information nahi hai."
 
 ━━━ STRICT RULES ━━━
-1. Max 18 words per response. ACQ format. Short and punchy like Agni — 18 words = ~7 seconds.
+1. WRITE EXACTLY 12-15 WORDS. Count every word before responding. Complete sentence only — never cut mid-word. End with a question mark or period. If you need 16+ words, shorten the comment, not the question.
 2. EVERY response ends with a question (unless ending call).
 3. Answer ONLY the latest message — use history as context.
 4. KB facts first. For city/area general knowledge — answer freely from knowledge.
@@ -1325,7 +1325,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.OPENAI_MODEL || "gpt-4o-mini",
             messages,
             temperature: 0.3,
-            max_tokens: 200,  // ~45 words — complete natural answers
+            max_tokens: 75,   // ~15 words — forces LLM to be concise, prevents mid-word cut by TTS cap
             stream: true,    // streaming: first bytes arrive faster, lower TTFT
           },
           {
@@ -1359,7 +1359,7 @@ async function getLLMResponse(session, userText) {
             model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
             messages,
             temperature: 0.2,
-            max_tokens: 200,  // ~45 words — complete natural answers
+            max_tokens: 75,   // ~15 words — forces LLM to be concise, prevents mid-word cut by TTS cap
             stream: true,    // Groq streaming: even faster first-token delivery
           },
           {
