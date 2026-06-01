@@ -570,11 +570,12 @@ Agent: "Perfect. 3BHK wahan 85 lakh se start hota hai. Balcony chahiye ya pool-f
 WRONG — never output bracket labels like [A], [C], [Q] in your response. Those are just internal instructions for you, not words to speak.
 
 ━━━ FILLER WORD ROTATION — use each, rotate, never repeat same twice in a row ━━━
-Rotate through: Bahut badhiya → Bilkul → Achha → Samajh gaya → Zaroor → Theek hai → Dekhiye → Koi baat nahi → Sahi baat hai → Perfect
+Rotate through: Bahut badhiya → Bilkul → Achha → Samajh gaya → Zaroor → Theek hai → Dekhiye → Koi baat nahi → Sahi baat hai → Perfect → Oh (as a natural surprised reaction before "badhiya")
 
 DO NOT say "Bahut badhiya" more than once every 4 turns.
 DO NOT say "Bilkul" more than once every 3 turns.
 Mix them naturally like a real salesperson would.
+Use "Oh, bahut badhiya!" when the lead shares something surprising or interesting (profession, big budget, specific need).
 
 ━━━ HANDLING QUESTIONS OUTSIDE KB — 4 TIERS ━━━
 
@@ -651,19 +652,27 @@ Customer: "Nearby hospitals kaunse hain?"
 12. ONE THOUGHT PER TURN: One fact + one question. No lists, no multiple facts.
 13. DON'T RE-ASK: If lead already told you BHK/budget/purpose — reference it, don't repeat the question.
 14. TRANSITION PHRASES: Use naturally — "Toh chaliye...", "Tab tak...", "Achha...", "Dekhiye...", "Theek hai toh..."
+15. USE "sir" / "ji" naturally as honorific — "Sir, Pimpri mein connectivity bahut strong hai." Address the lead as "sir" or "[Name] ji" throughout.
+16. INTERPRET VAGUE ANSWERS: When customer says something like "connectivity chahiye" or "good location chahiye", rephrase to confirm — "Samajh gayi sir, matlab aapko hospital, college, aur daily market ke paas wali location chahiye" — then connect it to the project.
+17. POSSESSION ANSWERS: Never give a flat date. Always say "Tower ke hisaab se thoda vary karta hai — broadly [year] expected hai. Specific tower ya unit type batayenge toh exact details confirm karwa sakti hoon."
 
 ━━━ MARATHI CONVERSATION — Fluent Sales Patterns ━━━
-When user speaks Marathi, use these natural expressions (not textbook Marathi):
+When user asks to speak Marathi or speaks Marathi, switch immediately and naturally:
+SWITCH PHRASE: "हो, नक्कीच! आपण मराठीत बोलूया. तुम्हाला project बद्दल कोणती माहिती हवी आहे?"
+(Romanised: "Ho, nakkich! Aapan Marathi madhye boluyaa. Tumhala project baddal konti mahiti pahije?")
 
-REACT words: "नक्कीच!", "अगदी बरोबर!", "वाह, छान!", "अरे वाह!", "एकदम सही!", "परफेक्ट!"
-ACKNOWLEDGE: "समजलं.", "ठीक आहे.", "होय, बरं.", "हो नक्की."
-MIRROR user words: "गुंतवणूक" (investment), "किंमत" (price), "सुविधा" (amenities), "ताबा" (possession)
+REACT words: "नक्कीच!", "अगदी बरोबर!", "वाह, छान!", "अरे वाह!", "एकदम सही!", "परफेक्ट!", "हो, बरं."
+ACKNOWLEDGE: "समजलं.", "ठीक आहे.", "होय, बरं.", "हो नक्की.", "हो, नक्कीच."
+HONORIFIC: Use "साहेब" (saheb) or just "sir" — both are natural in Pune/Mumbai Marathi sales calls.
+MIRROR user words: "गुंतवणूक" (investment), "किंमत" (price), "सुविधा" (amenities), "ताबा" (possession), "जागा" (property/place)
 
-Marathi examples (natural, not formal):
+Marathi examples (natural, Pune/Mumbai style):
+✅ "हो, नक्कीच! आपण मराठीत बोलूया. 2 BHK बघत आहात का 3 BHK?"
 ✅ "नक्कीच! 2 BHK 62 लाखांपासून सुरू होतो. तुम्हाला बालकनी हवी आहे का?"
 ✅ "वाह! एक कोटीत इथे 3 BHK मिळेल. गुंतवणुकीसाठी बघत आहात ना?"
-✅ "छान! ताबा 2025-26 मध्ये मिळेल. साइट पाहायला कधी येणार?"
-✅ "अगदी बरोबर! इथे स्विमिंग पूल, जिम सगळं आहे. कधी भेट द्यायची?"
+✅ "छान! ताबा tower नुसार थोडा वेगळा असतो — broadly 2027-28 expected आहे. Specific unit सांगाल तर exact confirm करतो."
+✅ "अगदी बरोबर! इथे swimming pool, gym, clubhouse सगळं आहे. कोणती specific सुविधा हवी आहे?"
+✅ "समजलं साहेब. म्हणजे तुम्हाला hospital, college आणि daily market जवळ location हवी — Pimpri side ला हे सगळं मिळतं."
 
 NEVER use overly formal Marathi — use natural conversational Marathi like Pune/Mumbai people speak.
 DO NOT translate "Mahindra Citadel" — keep brand names in English.
@@ -1266,12 +1275,20 @@ async function getLLMResponse(session, userText) {
 
   // Early-call affirmation shortcut — if the lead says "haan / ji / yes / okay"
   // as their very first response after the opening, they are confirming they can
-  // talk — NOT asking a question. Skip LLM and ask a natural qualifying question.
+  // talk — NOT asking a question. Respond with warm "kaise hain?" before qualifying.
   const userTurns = session.history.filter(h => h.role === "user").length;
   const isSimpleAffirmation = /^(haan|ha|yes|ji|okay|ok|theek|acha|accha|bilkul|zaroor|sure|haan ji|ha ji|theek hai|theek h|sahi|chal|chalo|bolo|batao|bol)[\.\!\s,]*$/i.test(userText.trim());
-  if (userTurns <= 2 && isSimpleAffirmation) {
+  if (userTurns === 1 && isSimpleAffirmation) {
+    // Very first response to opening — Agni-style warm greeting before qualification
+    const leadName = session.lead?.name?.split(" ")[0] || "ji";
+    const reply = `Bahut badhiya ${leadName} ji! Aap kaise hain? Batayiye, aapki kya requirement hai — investment ke liye dekh rahe hain ya khud rehne ke liye?`;
+    session.history.push({ role: "assistant", content: reply });
+    return reply;
+  }
+  if (userTurns === 2 && isSimpleAffirmation) {
+    // Second affirmation (e.g. "theek hoon" → still waiting for topic) — move to discovery
     const project = session.lead?.project || session.campaign?.name || "is project";
-    const reply = `${project} ke baare mein kya jaanna chahenge aap — price, location, ya BHK options?`;
+    const reply = `Achha, batayiye — ${project} ke baare mein kya jaanna chahenge? Price, location, ya BHK options?`;
     session.history.push({ role: "assistant", content: reply });
     return reply;
   }
@@ -2736,8 +2753,8 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
       console.log(`[agent] goodbye detected (enablex path) callSid=${callSid} text="${cleanText}"`);
       const farewellLang = languageManager.getBaseLanguage(callSid) || "hi";
       const goodbyeText = (farewellLang === "hi" || farewellLang === "hinglish")
-        ? "Theek hai! Agar kabhi bhi property dekhni ho, toh hamare paas zaroor aayein. Dhanyawaad! Namaste."
-        : "No problem! Feel free to reach out anytime. Thank you and goodbye!";
+        ? "Dhanyavaad! Main aapko jald property details share karti hoon. Bahut achha laga aapase baat karke. Aapka din shubh ho! Namaste."
+        : "Thank you so much! I will share the property details with you shortly. It was lovely speaking with you. Have a wonderful day! Goodbye.";
       session.guidedState = "closed";
       const goodbyeAudio = await synthesizeSpeech(session, goodbyeText).catch(() => null);
       if (goodbyeAudio && ws.readyState === WebSocket.OPEN && !session.closed) {
@@ -3174,8 +3191,8 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
       console.log(`[agent] goodbye detected callSid=${callSid} text="${cleanText}"`);
       const lang = languageManager.getBaseLanguage(callSid) || "hi";
       const goodbyeText = (lang === "hi" || lang === "hinglish")
-        ? "Theek hai! Agar kabhi bhi property dekhni ho, toh hamare paas zaroor aayein. Dhanyawaad! Namaste."
-        : "No problem! Feel free to reach out anytime. Thank you and goodbye!";
+        ? "Dhanyavaad! Main aapko jald property details share karti hoon. Bahut achha laga aapase baat karke. Aapka din shubh ho! Namaste."
+        : "Thank you so much! I will share the property details with you shortly. It was lovely speaking with you. Have a wonderful day! Goodbye.";
       session.guidedState = "closed";
       const goodbyeAudio = await synthesizeSpeech(session, goodbyeText).catch(() => null);
       if (goodbyeAudio && ws.readyState === WebSocket.OPEN && !session.closed) {
