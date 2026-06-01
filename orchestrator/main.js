@@ -575,6 +575,10 @@ Mix them naturally like a real salesperson would.
 
 TIER 1 — Our project (Mahindra Citadel, Pimpri):
 → Use KB facts ONLY. Exact price, RERA, amenities, possession from KB. Never guess.
+→ CONFIGURATIONS: Only mention BHK types that EXIST in the KB (e.g. 1BHK, 2BHK, 3BHK).
+  NEVER invent configs like "2.5 BHK", "2.5BHK", or any size not explicitly in the KB.
+→ If user says a number you don't understand (e.g. "80 percent", "assi feesad"), DO NOT
+  convert it into a fake config. Ask to clarify: "Aap loan ki baat kar rahe hain ya budget ki?"
 
 TIER 2 — Same developer, DIFFERENT project (Mahindra Vivante, Mahindra Happinest, Mahindra Eden etc.):
 → Answer from your general LLM knowledge about that project and area.
@@ -1414,7 +1418,7 @@ async function getLLMResponse(session, userText) {
       const response = await timed("openai_fallback", () =>
         axios.post(
           "https://api.openai.com/v1/chat/completions",
-          { model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages, temperature: 0.3, max_tokens: 110, stream: true },
+          { model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages, temperature: 0.3, max_tokens: 70, stream: true },
           { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, responseType: "stream", timeout: 8000 }
         )
       );
@@ -2391,7 +2395,10 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // agentConfig.wordCap may be much larger (e.g. 55 set in dashboard); we apply the
   // minimum of the two so the system prompt and the audio cap agree.
   const agentWordCap = parseInt(session.agentConfig?.wordCap || "99", 10);
-  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS || "18", 10));
+  // Safety-net cap only — max_tokens=70 already bounds the LLM to ~14-16 words.
+  // Set high (30) so a normal reply is NEVER hard-cut mid-word; this only catches
+  // a true runaway. The LLM finishes its sentence naturally well before 30.
+  const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS_STREAM || "30", 10));
   const model    = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
 
   // Voice ID — same resolution as TTS service
@@ -2477,7 +2484,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       try {
         const llmResp = await axios.post(
           "https://api.openai.com/v1/chat/completions",
-          { model: process.env.OPENAI_MODEL || "gpt-4o", messages, temperature: 0.4, max_tokens: 110, stream: true },
+          { model: process.env.OPENAI_MODEL || "gpt-4o", messages, temperature: 0.4, max_tokens: 70, stream: true },
           { headers: { Authorization: `Bearer ${openaiKey}` }, responseType: "stream", timeout: 8000 }
         );
         let remainder = "";
