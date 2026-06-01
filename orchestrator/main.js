@@ -405,61 +405,105 @@ function extractQualification(text, session) {
   const q = session.qualification;
   const t = (text || "").toLowerCase();
 
-  // Purpose: investment vs self-use
+  // ── Purpose: investment vs self-use ─────────────────────────────────────────
+  // Covers: romanized Hinglish, phonetic STT variants, Devanagari, Marathi
   if (!q.purpose) {
-    if (/invest|गुंतवणूक|निवेश|rental|rent|kiraya|किराया/.test(t)) q.purpose = "investment";
-    // "सेल्फ यूज" is the common Hinglish phonetic form; "self yuz/use" covers romanized variants
-    else if (/khud|apne liye|self[\s-]?use|self[\s-]?yuz|सेल्फ[\s-]?यूज|खुद|apna ghar|स्वयं|rehne ke liye|rahen|end[\s-]?use|खुद के लिए|खुद रहना/.test(t)) q.purpose = "self-use";
+    const investRx = /\b(?:invest(?:ment|ing)?|inwestment|invst|निवेश|गुंतवणूक|गुंतवणुकी|rental[\s-]?(?:yield|return|income|ke liye)?|rent(?:al)?[\s-]?(?:chahiye|ke liye|purpose)?|kiraya|किराया|किराए[\s-]?(?:के लिए|ke liye|sathi|साठी)|resale|re[\s-]?sale|return[\s-]?chahiye|appreciation|bhad[\s-]?vatila|passive[\s-]?income|renting|vikne[\s-]?sathi|बेचने[\s-]?के[\s-]?लिए|बेचना[\s-]?(?:hai|ahe)?|भाड्याने|बेचायचे|flipping|flip)\b/i;
+    const selfUseRx = /\b(?:khud|self[\s-]?use|self[\s-]?yuz|self[\s-]?uz|सेल्फ[\s-]?यूज|खुद[\s-]?(?:ke liye|reh|rah|रहना|रहेंगे|rahna)?|apne[\s-]?liye|apna[\s-]?ghar|स्वयं|rehne[\s-]?ke[\s-]?liye|reh(?:na)?[\s-]?(?:hai|chahiye)?|rahen(?:ge)?|end[\s-]?use|खुद[\s-]?के[\s-]?लिए|खुद[\s-]?रहना|ghar[\s-]?chahiye|house[\s-]?chahiye|ghar[\s-]?ghyaycha|rahaycha[\s-]?ahe|settle(?:ment)?|family[\s-]?ke[\s-]?liye|personal[\s-]?use|स्वतःसाठी|राहायला|स्वतःसाठी|स्वत:[\s-]?साठी|rajniti)\b/i;
+    if (investRx.test(t)) q.purpose = "investment";
+    else if (selfUseRx.test(t)) q.purpose = "self-use";
   }
 
-  // BHK preference — handle digits, English words, Hindi words, AND phonetic
-  // Hindi spellings that ElevenLabs STT produces (e.g. "टू बी एच के" for "2 BHK")
+  // ── BHK preference ───────────────────────────────────────────────────────────
+  // Handles: digits, English words, Hindi words, Marathi words, phonetic STT forms
+  // (e.g. "टू बी एच के" = ElevenLabs STT output for spoken "2 BHK")
   if (!q.bhk) {
-    const bhkM = text.match(/(\d)\s*(?:BHK|बीएचके|बी\s*एच\s*के|bedroom|b\.?h\.?k)/i)
-                || text.match(/(?:teen|three|3|तीन|थ्री)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के)/i)
-                || text.match(/(?:do|two|2|दो|टू)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के)/i)
-                || text.match(/(?:ek|one|1|एक|वन)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के)/i)
-                || text.match(/(?:char|four|4|चार|फोर)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के)/i)
-                // Phonetic: "टू बी एच के" / "थ्री बी एच के" from Hindi TTS transcription
-                || text.match(/(टू|वन|थ्री|फोर|फ़ोर)\s+बी\s+एच\s+के/i);
+    const bhkM =
+      // digit + BHK/bedroom
+      text.match(/([1-4])\s*(?:BHK|बीएचके|बी\s*एच\s*के|bedroom|bhk|b\.?h\.?k)/i) ||
+      // "teen / three / 3 / तीन / थ्री" BHK
+      text.match(/(?:teen|tin|three|3|तीन|थ्री|तिन)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के|bhk)/i) ||
+      // "do / two / 2 / दो / टू / don" BHK
+      text.match(/(?:do|don|two|2|दो|टू)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के|bhk)/i) ||
+      // "ek / one / 1 / एक / वन" BHK
+      text.match(/(?:ek|one|1|एक|वन)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के|bhk)/i) ||
+      // "char / four / 4 / चार / फोर" BHK
+      text.match(/(?:char|chaar|four|4|चार|फोर|फ़ोर)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के|bhk)/i) ||
+      // phonetic Devanagari from STT: "टू बी एच के" / "थ्री बी एच के"
+      text.match(/(टू|वन|थ्री|फोर|फ़ोर)\s+बी\s+एच\s+के/i) ||
+      // "teen / do / ek kamre / kamra" (Hindi room count without BHK keyword)
+      text.match(/(?:teen|तीन|3)\s+(?:kamre?|कमरे?|room)/i) ||
+      text.match(/(?:do|दो|2)\s+(?:kamre?|कमरे?|room)/i) ||
+      text.match(/(?:ek|एक|1)\s+(?:kamre?|कमरे?|room)/i) ||
+      // studio / 1RK
+      text.match(/(?:studio|1\s*RK|1rk|ek[\s-]?room[\s-]?kitchen)/i);
+
     if (bhkM) {
       const raw = bhkM[1] || bhkM[0];
-      const n = /teen|three|3|तीन|थ्री/.test(raw) ? "3"
-              : /do|two|2|दो|टू/.test(raw) ? "2"
-              : /ek|one|1|एक|वन/.test(raw) ? "1"
-              : /char|four|4|चार|फोर|फ़ोर/.test(raw) ? "4"
-              : raw;
-      q.bhk = `${n}BHK`;
+      let n;
+      if (/studio|1rk|1\s*rk|ek[\s-]?room[\s-]?kitchen/i.test(raw)) n = "studio";
+      else if (/teen|tin|three|3|तीन|थ्री|तिन/.test(raw)) n = "3";
+      else if (/do|don|two|2|दो|टू/.test(raw)) n = "2";
+      else if (/ek|one|1|एक|वन/.test(raw)) n = "1";
+      else if (/char|chaar|four|4|चार|फोर|फ़ोर/.test(raw)) n = "4";
+      else n = raw.replace(/\D/g, "") || raw;
+      q.bhk = n === "studio" ? "Studio/1RK" : `${n}BHK`;
     }
   }
 
-  // Budget — match digits AND Hindi/Urdu word-numbers (ek crore, do lakh, etc.)
+  // ── Budget ───────────────────────────────────────────────────────────────────
+  // Word-number table covers Hindi, Urdu, Marathi spoken forms + Hinglish phonetics
   if (!q.budget) {
-    // Normalize word-numbers to digits so a single regex can match both forms
-    const wordNumMap = { ek: "1", do: "2", dhai: "2.5", teen: "3", char: "4", paanch: "5",
-      chhe: "6", saat: "7", aath: "8", nau: "9", das: "10", pandrah: "15", bees: "20",
-      pachees: "25", pachis: "25", tees: "30", chalis: "40", pachaas: "50", saath: "70",
-      assi: "80", nabbe: "90", sau: "100",
-      एक: "1", दो: "2", "डेढ़": "1.5", ढाई: "2.5", तीन: "3", चार: "4", पाँच: "5",
-      पांच: "5", छह: "6", सात: "7", आठ: "8", नौ: "9", दस: "10", पंद्रह: "15",
-      बीस: "20", पच्चीस: "25", तीस: "30", चालीस: "40", पचास: "50", साठ: "60",
-      सत्तर: "70", अस्सी: "80", नब्बे: "90", सौ: "100" };
+    const wordNumMap = {
+      // Romanized Hindi/Urdu
+      ek: "1", do: "2", "dhai": "2.5", teen: "3", char: "4", chaar: "4",
+      paanch: "5", panch: "5", chhe: "6", saat: "7", saath: "7", aath: "8",
+      nau: "9", das: "10", gyarah: "11", barah: "12", terah: "13", chaudah: "14",
+      pandrah: "15", solah: "16", satrah: "17", atharah: "18", unnis: "19",
+      bees: "20", pachees: "25", pachis: "25", tees: "30", paintees: "35",
+      chalis: "40", paintaalis: "45", pachaas: "50", pachpan: "55",
+      saath: "70", sattar: "70", sitter: "70", assi: "80", nabbe: "90", sau: "100",
+      // Marathi romanized
+      ek: "1", don: "2", tin: "3", char: "4", paach: "5", sahaa: "6",
+      saat: "7", aath: "8", nav: "9", daha: "10", pandhra: "15", vees: "20",
+      panchavees: "25", tees: "30", chalees: "40", panna: "50", sattar: "70",
+      // Devanagari
+      एक: "1", दो: "2", "डेढ़": "1.5", ढाई: "2.5", तीन: "3", चार: "4",
+      पाँच: "5", पांच: "5", छह: "6", सात: "7", आठ: "8", नौ: "9",
+      दस: "10", ग्यारह: "11", बारह: "12", पंद्रह: "15", बीस: "20",
+      पच्चीस: "25", तीस: "30", पैंतीस: "35", चालीस: "40", पैंतालीस: "45",
+      पचास: "50", साठ: "60", सत्तर: "70", अस्सी: "80", नब्बे: "90", सौ: "100",
+      // Marathi Devanagari
+      दोन: "2", तीन: "3", पाच: "5", सहा: "6", सात: "7", आठ: "8", नऊ: "9",
+      दहा: "10", पंधरा: "15", वीस: "20", पंचवीस: "25", तीस: "30",
+      पन्नास: "50", सत्तर: "70",
+    };
     let normText = text;
     for (const [word, digit] of Object.entries(wordNumMap)) {
       normText = normText.replace(new RegExp(`\\b${word}\\b`, "gi"), digit);
     }
-    // "karor/karore/karod" = Hinglish phonetic spellings of crore used in speech
-    const croreM = normText.match(/(\d+(?:\.\d+)?)\s*(?:crore|cr\.?\b|करोड़|कोटी|karor|karore|karod|crore)/i);
-    const lakhM  = normText.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख|लख|lacs)/i);
-    if (croreM) q.budget = `${croreM[1]} crore`;
-    else if (lakhM) q.budget = `${lakhM[1]} lakh`;
+    // Range pattern: "50 se 70 lakh" → pick upper bound
+    const rangeM = normText.match(/(\d+(?:\.\d+)?)\s*(?:se|to|-)\s*(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख|लख|lacs)/i)
+                || normText.match(/(\d+(?:\.\d+)?)\s*(?:se|to|-)\s*(\d+(?:\.\d+)?)\s*(?:crore|cr\.?\b|करोड़|कोटी|karor|karore|karod)/i);
+    if (rangeM) {
+      const unit = /crore|cr\b|करोड़|कोटी|karor|karore|karod/i.test(normText) ? "crore" : "lakh";
+      q.budget = `${rangeM[1]}-${rangeM[2]} ${unit}`;
+    } else {
+      const croreM = normText.match(/(\d+(?:\.\d+)?)\s*(?:crore|cr\.?\b|करोड़|कोटी|karor|karore|karod|koti|कोटी)/i);
+      const lakhM  = normText.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख|लख|lacs|laakh)/i);
+      if (croreM) q.budget = `${croreM[1]} crore`;
+      else if (lakhM) q.budget = `${lakhM[1]} lakh`;
+    }
   }
 
-  // Timeline
+  // ── Timeline ─────────────────────────────────────────────────────────────────
   if (!q.timeline) {
-    if (/immediately|abhi|turant|jaldi|6 month|6 mahine|this year|is saal/.test(t)) q.timeline = "immediate";
-    else if (/next year|agle saal|1 year|1 साल|2026/.test(t)) q.timeline = "next year";
-    else if (/2.*3 year|2-3|baad mein|later/.test(t)) q.timeline = "2-3 years";
+    if (/\b(?:immediately|abhi[\s-]?chahiye|turant|jaldi[\s-]?chahiye|urgently|asap|as[\s-]?soon|kal[\s-]?chahiye|ready[\s-]?possession|ready[\s-]?to[\s-]?move|6[\s-]?month|6[\s-]?mahine|this[\s-]?year|is[\s-]?saal|is[\s-]?mahine|aaj|kal|next[\s-]?month|agla[\s-]?mahina|possession[\s-]?chahiye|abhi[\s-]?lena|shift[\s-]?karna|tayaar[\s-]?hoon)\b/i.test(t))
+      q.timeline = "immediate";
+    else if (/\b(?:next[\s-]?year|agle[\s-]?saal|pudh(?:il|cha)[\s-]?varsh|1[\s-]?(?:year|sal|saal|वर्ष|साल)|2026|ek[\s-]?saal[\s-]?mein|within[\s-]?a[\s-]?year)\b/i.test(t))
+      q.timeline = "next year";
+    else if (/\b(?:2[\s-]?(?:se|to|-)?[\s-]?3[\s-]?(?:year|saal|sal|वर्ष)|2-3|baad[\s-]?mein|later|phir[\s-]?dekhenge|baad[\s-]?mein[\s-]?dekhte|jab[\s-]?milega|abhi[\s-]?nahi|sochna[\s-]?hai|time[\s-]?lagega|2[\s-]?saal|teen[\s-]?saal|3[\s-]?year)\b/i.test(t))
+      q.timeline = "2-3 years";
   }
 }
 
@@ -589,29 +633,36 @@ Never reject — always offer an alternative.`}
 
 ━━━ THE ACQ FORMULA — Every single response ━━━
 Structure every response as three parts (DO NOT label them, just follow the pattern):
-1. Warm acknowledgment (1-3 words)
-2. One natural comment or fact
-3. One short question
+1. Warm acknowledgment (1-3 words — vary every turn)
+2. One natural comment or fact (relevant to what they just said)
+3. One short question (the NEXT unanswered qualification item)
 
-CORRECT EXAMPLES — study this exact format:
-Customer: "Pune West mein."
-Agent: "Bahut badhiya. Pune West investment ke liye kaafi demand mein hai. Aapka budget kis range tak hai?"
-
+CORRECT EXAMPLES — exact format, ~12-15 words:
 Customer: "Investment ke liye."
-Agent: "Samajh gaya. Investment ke liye rental yield aur appreciation dono important hain. Kaunsa BHK dekh rahe hain?"
+Agent: "Samajh gaya. Investment ke liye yahan ka rental market strong hai. Budget kitna hai?"
 
-Customer: "3BHK."
-Agent: "Perfect. 3BHK wahan 85 lakh se start hota hai. Balcony chahiye ya pool-facing prefer karenge?"
+Customer: "Ek crore."
+Agent: "Perfect. Ek crore mein 3BHK milega. Kitna BHK prefer karenge?"
 
-WRONG — never output bracket labels like [A], [C], [Q] in your response. Those are just internal instructions for you, not words to speak.
+Customer: "3BHK chahiye."
+Agent: "Zaroor. 3BHK mein balcony bhi milti hai. Apna WhatsApp number share karenge?"
 
-━━━ FILLER WORD ROTATION — use each, rotate, never repeat same twice in a row ━━━
-Rotate through: Bahut badhiya → Bilkul → Achha → Samajh gaya → Zaroor → Theek hai → Dekhiye → Koi baat nahi → Sahi baat hai → Perfect → Oh (as a natural surprised reaction before "badhiya")
+Customer: "Haan, 9876543210."
+Agent: "Achha! Number note kar liya. Ek baar personally site dekhenge toh sahi rahega. Kaunsa din comfortable hai?"
 
-DO NOT say "Bahut badhiya" more than once every 4 turns.
-DO NOT say "Bilkul" more than once every 3 turns.
-Mix them naturally like a real salesperson would.
-Use "Oh, bahut badhiya!" when the lead shares something surprising or interesting (profession, big budget, specific need).
+Customer: "Sochna hai."
+Agent: "Bilkul, koi pressure nahi. WhatsApp par details bhej deti hoon. Yahi number hai?"
+
+WRONG — never output bracket labels like [A], [C], [Q]. Never say "Bahut badhiya! Mahindra Citadel ek bahut..." (too long, too many words, project name repeated).
+
+━━━ FILLER WORD ROTATION — vary every turn, NEVER repeat the same word back-to-back ━━━
+Pool: Bilkul → Samajh gaya → Achha → Zaroor → Theek hai → Sahi baat hai → Perfect → Dekhiye → Wah → Haan, bilkul → Oh, bahut badhiya (only for genuinely surprising info)
+
+Rules:
+• NEVER say "Bahut badhiya" twice in any 4 consecutive turns
+• NEVER say "Bilkul" twice in any 3 consecutive turns
+• Match energy: soft answer → gentle ack ("Achha"); big budget → "Oh, bahut badhiya!"
+• One filler per response — not two stacked together
 
 ━━━ HANDLING QUESTIONS OUTSIDE KB — 4 TIERS ━━━
 
@@ -672,32 +723,46 @@ Customer: "Nearby hospitals kaunse hain?"
 ❌ "Mere paas hospital ki information nahi hai."
 
 ━━━ STRICT RULES ━━━
-1. WRITE EXACTLY 12-15 WORDS. Count every word before responding. Complete sentence only — never cut mid-word. End with a question mark or period. If you need 16+ words, shorten the comment, not the question.
-2. EVERY response ends with a question (unless ending call).
-3. Answer ONLY the latest message — use history as context.
-4. KB facts first. For city/area general knowledge — answer freely from knowledge.
+1. PHONE RESPONSE LENGTH — MAX 15 WORDS. Count before responding. One complete sentence only. End with ? or period. If 16+ words needed, shorten the comment — keep the question.
+2. EVERY response ends with exactly ONE question (unless ending the call).
+3. Answer ONLY the latest message — prior turns are context, not the topic.
+4. KB facts first. City/area general knowledge — answer freely, never block.
 5. Project-specific unknowns: "Verify karke batati hoon" then redirect.
 6. NEVER re-introduce yourself after opening.
 7. If asked if you are AI: "Main developer ki sales team se hoon."
 8. NEVER say "Prop-hunt" — always "Prop Hunt".
-9. QUALIFY one thing at a time — purpose → area → budget → BHK → timeline. (Area first — then budget filters options for that area naturally.)
-   After budget is confirmed: ask "Kya aap apna WhatsApp number share kar sakte hain jahan main property details bhej sakoon?" — collect contact BEFORE presenting project.
-   After site visit or details sharing is confirmed: close warmly with "Aapka din shubh ho! Namaste."
+9. STRICT QUALIFICATION ORDER — purpose → budget → BHK → timeline → contact. Follow this order exactly.
+   • NEVER ask about something the lead already told you. If they said "3BHK" in any turn — NEVER ask BHK again.
+   • NEVER ask budget if they already gave it. Reference it: "Aapke 1 crore budget mein..."
+   • NEVER ask purpose if they already said "investment" or "self-use".
+   • Move forward — don't loop back to already-answered questions.
+   After BHK is confirmed: ask "Kya aap apna WhatsApp number share kar sakte hain jahan main property details bhej sakoon?"
+   After WhatsApp collected: present ONE KB fact + offer site visit. Close warmly.
 10. ${pitchTone === "aggressive" ? "CLOSER: After value build, bridge to visit — 'Main slot arrange kar sakti hoon, kab free hain?'" : pitchTone === "consultative" ? "ADVISOR: Only suggest site visit when lead signals real interest. Never push." : "BALANCED: Offer site visit naturally after BHK + price are clear. One gentle ask."}
-11. REPEATED HELLO: Ask "Kya aap mujhe sun pa rahe hain?"
-12. ONE THOUGHT PER TURN: One fact + one question. No lists, no multiple facts.
-13. DON'T RE-ASK: If lead already told you BHK/budget/purpose — reference it, don't repeat the question.
-14. TRANSITION PHRASES: Use naturally — "Toh chaliye...", "Tab tak...", "Achha...", "Dekhiye...", "Theek hai toh..."
-15. USE "sir" / "ji" naturally as honorific — "Sir, Pimpri mein connectivity bahut strong hai." Address the lead as "sir" or "[Name] ji" throughout.
-16. INTERPRET VAGUE ANSWERS: When customer says something like "connectivity chahiye" or "good location chahiye", rephrase to confirm — "Samajh gayi sir, matlab aapko hospital, college, aur daily market ke paas wali location chahiye" — then connect it to the project.
-17. POSSESSION ANSWERS: Never give a flat date. Always say "Tower ke hisaab se thoda vary karta hai — broadly [year] expected hai. Specific tower ya unit type batayenge toh exact details confirm karwa sakti hoon." NEVER say just "26" — always say the full year "2026".
-18. RENTAL YIELD: If asked about rental income, rental return, or rental yield — answer with general market knowledge even if KB is silent: "Pimpri-Chinchwad mein aajkal 2-3% annual rental yield milta hai. Under-construction property mein possession ke baad rental shuru hota hai — yahan ka rental market strong hai due to IT companies and Pimpri industrial belt." Then ask if they want to know more about the specific project's appreciation potential.
-19. SITE VISIT BOOKING: If lead asks to "book site visit", "visit book karo", "site visit kab hai", "visit schedule karo" — respond: "Bilkul! Main aapka site visit book karti hoon. Kaunsa din aur time aapke liye comfortable rahega — weekday ya weekend?" Then collect their preferred day/time and say "Perfect! Main aapki team ko [day/time] ke liye note kar deti hoon. Humari sales team aapko 24 hours mein confirm karegi." Do NOT say "I'll check" or ignore the request.
-20. LANGUAGE REQUEST: If lead says "Marathi mein bolo", "marathi me baat karo", "क्या हम मराटी में बात कर सकते हैं?", "Marathi madhye bola" or any similar request — immediately switch to Marathi and say the switch phrase. NEVER say "samajh nahi aaya" for a language request.
+11. UNCLEAR / GARBLED INPUT: If lead says something very short (1-2 words), unclear, or seems like noise — ask to repeat ONCE: "Ek baar phir bata sakte hain?" or "Thoda clear nahi aaya, kya aap dobara bata sakte hain?" Do NOT make assumptions from noise.
+12. ONE THOUGHT PER TURN: One fact + one question. No lists, no bullet points, no multiple facts.
+13. DON'T RE-ASK ANYTHING ALREADY ANSWERED: Check conversation history before asking. Reference what they said.
+14. TRANSITION PHRASES: Use naturally — "Toh chaliye...", "Achha...", "Dekhiye...", "Theek hai toh...", "Sahi baat hai..."
+15. USE "sir" / "ji" naturally as honorific — not every sentence. Once per 2-3 turns is natural.
+16. INTERPRET VAGUE ANSWERS: Rephrase to confirm — "Matlab aapko hospital, college ke paas location chahiye" — then connect to project.
+17. POSSESSION ANSWERS: Never give a flat date. Always say "Tower ke hisaab se vary karta hai — broadly [year] expected hai. Specific unit batayenge toh exact confirm kar sakti hoon." NEVER say just "26" — always "2026".
+18. RENTAL YIELD: If asked about rental income, return, or yield — answer from general market knowledge: "Pimpri-Chinchwad mein 2-3% annual rental yield milta hai. Yahan ka rental market strong hai — IT companies aur industrial belt ke wajah se." Then ask if they want appreciation details.
+19. SITE VISIT BOOKING: If lead asks to book or schedule a visit — respond: "Bilkul! Kaunsa din comfortable rahega — weekday ya weekend?" Collect day/time, then say: "Perfect! Humari team [day] ke liye note kar leti hai. Sales team 24 hours mein confirm karegi."
+20. LANGUAGE REQUEST: If lead says "Marathi mein bolo", "marathi me baat karo", "क्या हम मराटी में बात कर सकते हैं?", or any similar request — immediately switch to Marathi. NEVER say "samajh nahi aaya" for a language request.
+21. MEMORY — CRITICAL: After any answer from the lead, mentally tick it off. Never re-ask ticked items. Example flow:
+    Turn 1 → ask purpose → lead says "investment" → TICKED
+    Turn 2 → ask budget → lead says "80 lakh" → TICKED
+    Turn 3 → ask BHK → lead says "2BHK" → TICKED
+    Turn 4 → ask WhatsApp → collect number → TICKED
+    Turn 5 → present project USP → offer site visit
+    NEVER go back to turn 1 question after it's ticked.
+22. SOFT REFUSALS: If lead says "sochna hai", "baad mein", "abhi nahi" — acknowledge warmly and offer WhatsApp: "Bilkul, koi pressure nahi. Main aapko WhatsApp par details bhej deti hoon. Number yahi hai?" After WhatsApp = close warmly.
+23. BUDGET RESPONSE: If budget shared is lower than expected — NEVER reject. Say: "Theek hai. Is range mein options limited hain — lekin dekh sakte hain. Kaunsa BHK prefer karenge?"
 
 ━━━ MARATHI CONVERSATION — Fluent Sales Patterns ━━━
-IMPORTANT: Only enter this Marathi mode when the system prompt says "CURRENT CONVERSATION LANGUAGE: mr".
-Do NOT switch to Marathi just because you see Marathi words or script in the user's message.
+IMPORTANT: Enter Marathi mode when system prompt says "CURRENT CONVERSATION LANGUAGE: mr".
+This is set either by explicit request ("marathi mein bolo") or by auto-detection (user naturally speaks Marathi).
+Do NOT switch to Marathi just because you see ONE Marathi word — only when language=mr is set.
 SWITCH PHRASE (use when language=mr): "हो, नक्कीच! आपण मराठीत बोलूया. तुम्हाला project बद्दल कोणती माहिती हवी आहे?"
 (Romanised: "Ho, nakkich! Aapan Marathi madhye boluyaa. Tumhala project baddal konti mahiti pahije?")
 
@@ -2782,13 +2847,30 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     const lcText = transcription.text.toLowerCase();
     if (/marathi|मराठी|मराटी/.test(lcText)) {
       session._lockedLanguage = "mr";
-      console.log(`[lang-lock] locked to Marathi callSid=${callSid}`);
+      console.log(`[lang-lock] locked to Marathi (explicit) callSid=${callSid}`);
     } else if (/hindi|हिंदी|हिन्दी/.test(lcText)) {
       session._lockedLanguage = "hi";
-      console.log(`[lang-lock] locked to Hindi callSid=${callSid}`);
+      session._marathiCount = 0;
+      console.log(`[lang-lock] locked to Hindi (explicit) callSid=${callSid}`);
     } else if (/english|अंग्रेज़ी/.test(lcText)) {
       session._lockedLanguage = "en";
-      console.log(`[lang-lock] locked to English callSid=${callSid}`);
+      session._marathiCount = 0;
+      console.log(`[lang-lock] locked to English (explicit) callSid=${callSid}`);
+    } else if (!session._lockedLanguage || session._lockedLanguage === "hi") {
+      // Auto-detect Marathi from natural speech — user never said "marathi mein bolo"
+      // but consistently uses Marathi-only markers. These words do NOT appear in Hindi.
+      const marathiOnlyRx = /\b(आहे|नाही|काय|कसे|कसं|मला|तुम्हाला|आम्ही|सांगा|नक्की|छान|होय|किंमत|ताबा|जागा|बघा|सांगतो|सांगते|आहेत|नाहीत|कुठे|केव्हा|किती|चांगलं|चांगले|बरं|हवं|हवे|द्या|घ्या|पाहिजे|पाहुया|बोलूया|करूया|वाटतं|वाटते|येतं|येते|जातं|जाते|राहतं|राहते|मिळतं|मिळते|महिना|वर्ष|कोटी|लाख|रुपये)\b/.test(transcription.text);
+      if (marathiOnlyRx) {
+        session._marathiCount = (session._marathiCount || 0) + 1;
+        console.log(`[lang-auto] Marathi markers count=${session._marathiCount} callSid=${callSid}`);
+        if (session._marathiCount >= 2) {
+          session._lockedLanguage = "mr";
+          console.log(`[lang-lock] auto-locked to Marathi (natural speech) callSid=${callSid}`);
+        }
+      } else {
+        // Reset counter if no Marathi markers — prevents single-utterance false positives
+        if ((session._marathiCount || 0) > 0) session._marathiCount = 0;
+      }
     }
 
     const newLang = languageManager.getBaseLanguage(callSid);
@@ -3224,13 +3306,28 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
     const lcCleanForLang = cleanText.toLowerCase();
     if (/marathi|मराठी|मराटी/.test(lcCleanForLang)) {
       session._lockedLanguage = "mr";
-      console.log(`[lang-lock] locked to Marathi (dg) callSid=${callSid}`);
+      console.log(`[lang-lock] locked to Marathi (explicit,dg) callSid=${callSid}`);
     } else if (/hindi|हिंदी|हिन्दी/.test(lcCleanForLang)) {
       session._lockedLanguage = "hi";
-      console.log(`[lang-lock] locked to Hindi (dg) callSid=${callSid}`);
+      session._marathiCount = 0;
+      console.log(`[lang-lock] locked to Hindi (explicit,dg) callSid=${callSid}`);
     } else if (/english|अंग्रेज़ी/.test(lcCleanForLang)) {
       session._lockedLanguage = "en";
-      console.log(`[lang-lock] locked to English (dg) callSid=${callSid}`);
+      session._marathiCount = 0;
+      console.log(`[lang-lock] locked to English (explicit,dg) callSid=${callSid}`);
+    } else if (!session._lockedLanguage || session._lockedLanguage === "hi") {
+      // Auto-detect Marathi from natural speech markers (words that never appear in Hindi)
+      const marathiOnlyRx = /\b(आहे|नाही|काय|कसे|कसं|मला|तुम्हाला|आम्ही|सांगा|नक्की|छान|होय|किंमत|ताबा|जागा|बघा|सांगतो|सांगते|आहेत|नाहीत|कुठे|केव्हा|किती|चांगलं|चांगले|बरं|हवं|हवे|द्या|घ्या|पाहिजे|पाहुया|बोलूया|करूया|वाटतं|वाटते|येतं|येते|जातं|जाते|राहतं|राहते|मिळतं|मिळते|महिना|वर्ष|कोटी|लाख|रुपये)\b/.test(cleanText);
+      if (marathiOnlyRx) {
+        session._marathiCount = (session._marathiCount || 0) + 1;
+        console.log(`[lang-auto] Marathi markers count=${session._marathiCount} (dg) callSid=${callSid}`);
+        if (session._marathiCount >= 2) {
+          session._lockedLanguage = "mr";
+          console.log(`[lang-lock] auto-locked to Marathi (natural speech,dg) callSid=${callSid}`);
+        }
+      } else {
+        if ((session._marathiCount || 0) > 0) session._marathiCount = 0;
+      }
     }
 
     const newLang = languageManager.getBaseLanguage(callSid);
