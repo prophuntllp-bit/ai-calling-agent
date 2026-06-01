@@ -424,10 +424,23 @@ function extractQualification(text, session) {
     }
   }
 
-  // Budget
+  // Budget — match digits AND Hindi/Urdu word-numbers (ek crore, do lakh, etc.)
   if (!q.budget) {
-    const croreM = text.match(/(\d+(?:\.\d+)?)\s*(?:crore|cr\.?\b|करोड़|कोटी)/i);
-    const lakhM  = text.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख|लख)/i);
+    // Normalize word-numbers to digits so a single regex can match both forms
+    const wordNumMap = { ek: "1", do: "2", dhai: "2.5", teen: "3", char: "4", paanch: "5",
+      chhe: "6", saat: "7", aath: "8", nau: "9", das: "10", pandrah: "15", bees: "20",
+      pachees: "25", pachis: "25", tees: "30", chalis: "40", pachaas: "50", saath: "70",
+      assi: "80", nabbe: "90", sau: "100",
+      एक: "1", दो: "2", "डेढ़": "1.5", ढाई: "2.5", तीन: "3", चार: "4", पाँच: "5",
+      पांच: "5", छह: "6", सात: "7", आठ: "8", नौ: "9", दस: "10", पंद्रह: "15",
+      बीस: "20", पच्चीस: "25", तीस: "30", चालीस: "40", पचास: "50", साठ: "60",
+      सत्तर: "70", अस्सी: "80", नब्बे: "90", सौ: "100" };
+    let normText = text;
+    for (const [word, digit] of Object.entries(wordNumMap)) {
+      normText = normText.replace(new RegExp(`\\b${word}\\b`, "gi"), digit);
+    }
+    const croreM = normText.match(/(\d+(?:\.\d+)?)\s*(?:crore|cr\.?\b|करोड़|कोटी)/i);
+    const lakhM  = normText.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख|लख)/i);
     if (croreM) q.budget = `${croreM[1]} crore`;
     else if (lakhM) q.budget = `${lakhM[1]} lakh`;
   }
@@ -476,18 +489,29 @@ function buildSystemPrompt(lead, knowledgeContext, language, agentConfig = {}, q
 SUPPORTED LANGUAGES: Hindi, Marathi, English, Hinglish (mixed Hindi-English).
 These are the only languages you speak on this call.
 
+CURRENT CONVERSATION LANGUAGE: ${language}
+You MUST reply in this language unless the user EXPLICITLY requests a change (see below).
+
 LANGUAGE MATCHING:
-- Lead speaks Hindi → reply PURE Hindi (Devanagari). No English mixing.
-- Lead speaks English → reply in English only.
-- Lead speaks Hinglish → reply in natural Hinglish. Match their mix ratio.
-- Lead says "Marathi mein bolo" or speaks Marathi → switch to Marathi and STAY there.
-- Lead speaks clearly foreign/non-Indian script (Odia, Japanese, etc.) → respond in Hindi: "Main sirf Hindi, Marathi aur English mein baat kar sakti hoon." IMPORTANT: Only use this for CLEARLY foreign language text. If input is garbled, unclear, or partial Hindi — respond normally in Hindi without the language restriction message.
+- language=hi or hin → reply PURE Hindi (Devanagari only). No Marathi, no English mixing.
+- language=mr → reply PURE Marathi. No Hindi, no English mixing.
+- language=en → reply in English only.
+- language=hinglish → reply in natural Hinglish. Match their mix ratio.
+- Garbled, unclear, or noisy text → stay in current language. Never switch.
+
+LANGUAGE SWITCHING — EXTREMELY STRICT RULE:
+NEVER switch language based on what words or script the user uses in their message.
+ONLY switch if the user EXPLICITLY says one of these EXACT phrases (or very close paraphrase):
+  • "marathi mein bolo" / "marathi me baat karo" / "marathi mein baat karte hai"
+  • "hindi mein bolo" / "hindi me baat karo"
+  • "english mein bolo" / "speak in english"
+If you see any Marathi-looking words, Marathi script, or mixed text — DO NOT switch. Stay in current language.
+Noise, garbled audio, partial words = NOT a language switch request.
 
 LANGUAGE LOCK — CRITICAL:
-Once a language is established (especially after user explicitly asks for a language), MAINTAIN it for the entire conversation.
-- If user said "Marathi mein bolo" → stay in Marathi even if they use Hindi words in acknowledgments like "हाँ", "ठीक है", "ओके".
-- Only switch language if user EXPLICITLY requests a different language ("Hindi mein bolo", "speak in English").
-- One Hindi/English word from user = NOT a language switch. It's just acknowledgment.
+Once a language is established, MAINTAIN it for the entire conversation.
+- If user said "Marathi mein bolo" → stay in Marathi even if they use Hindi words like "हाँ", "ठीक है", "ओके".
+- One Hindi/Marathi/English word mixed in = NOT a language switch. It's just natural bilingual speech.
 
 Keep responses SHORT — max ${wordCap} words — one clear point per reply.`;
 
@@ -657,8 +681,9 @@ Customer: "Nearby hospitals kaunse hain?"
 17. POSSESSION ANSWERS: Never give a flat date. Always say "Tower ke hisaab se thoda vary karta hai — broadly [year] expected hai. Specific tower ya unit type batayenge toh exact details confirm karwa sakti hoon."
 
 ━━━ MARATHI CONVERSATION — Fluent Sales Patterns ━━━
-When user asks to speak Marathi or speaks Marathi, switch immediately and naturally:
-SWITCH PHRASE: "हो, नक्कीच! आपण मराठीत बोलूया. तुम्हाला project बद्दल कोणती माहिती हवी आहे?"
+IMPORTANT: Only enter this Marathi mode when the system prompt says "CURRENT CONVERSATION LANGUAGE: mr".
+Do NOT switch to Marathi just because you see Marathi words or script in the user's message.
+SWITCH PHRASE (use when language=mr): "हो, नक्कीच! आपण मराठीत बोलूया. तुम्हाला project बद्दल कोणती माहिती हवी आहे?"
 (Romanised: "Ho, nakkich! Aapan Marathi madhye boluyaa. Tumhala project baddal konti mahiti pahije?")
 
 REACT words: "नक्कीच!", "अगदी बरोबर!", "वाह, छान!", "अरे वाह!", "एकदम सही!", "परफेक्ट!", "हो, बरं."
@@ -1300,10 +1325,11 @@ async function getLLMResponse(session, userText) {
     (await getKnowledgeContext(session.campaign?.project_id || session.lead.project_id, userText))
   ).slice(0, 3500);  // 3500 chars — includes pricing section. (was 1500: pricing was cut off → agent said "not discussed")
 
-  // Resolve language — prefer detected language over "auto" placeholder
-  const resolvedLanguage = (language === "auto" || language === "auto-IN" || !language)
-    ? (languageManager.getBaseLanguage(session.callSid) || "hi")
-    : language;
+  // Resolve language — _lockedLanguage (explicit user request) takes precedence
+  const resolvedLanguage = session._lockedLanguage
+    || ((language === "auto" || language === "auto-IN" || !language)
+      ? (languageManager.getBaseLanguage(session.callSid) || "hi")
+      : language);
 
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
 
@@ -2473,9 +2499,13 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
     session.dynamicVariables?.knowledge_base ||
     (await getKnowledgeContext(session.campaign?.project_id || session.lead.project_id, userText).catch(() => ""))
   ).slice(0, 3500);
-  const resolvedLanguage = (language === "auto" || language === "auto-IN" || !language)
-    ? (languageManager.getBaseLanguage(callSid) || "hi")
-    : language;
+  // session._lockedLanguage takes precedence — it's set before this function is called
+  // when the user explicitly says "marathi mein bolo" etc., so the CURRENT turn already
+  // uses the new language rather than waiting for the next utterance.
+  const resolvedLanguage = session._lockedLanguage
+    || ((language === "auto" || language === "auto-IN" || !language)
+      ? (languageManager.getBaseLanguage(callSid) || "hi")
+      : language);
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
   const historyContext = session.history.slice(-16).slice(0, -1);
   const messages = [
