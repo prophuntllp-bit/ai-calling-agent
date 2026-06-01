@@ -504,10 +504,12 @@ OBJECTION SCRIPTS:
 • "Sochna hai" → "Zaroor sochiye — lekin slots limited hain. Ek tentative visit book kar lein, cancel karna free hai."
 • "Abhi time nahi" → "20 minute — bas itna hi chahiye. Weekend mein bhi visit ho sakti hai."`,
 
-    balanced: `SALES PITCH FLOW — 3-step natural progression:
-STEP 1 — ANSWER & DISCOVER: Answer the lead's question fully using KB. Ask one focused discovery question (BHK, budget, or purpose).
-STEP 2 — BUILD VALUE: Once BHK and budget are clear, share specifics — layout sizes, price, key USPs. Use urgency naturally: "Yeh limited inventory hai" / "Launch price mein mil raha hai — baad mein 10-15% badh sakti hai."
-STEP 3 — INVITE SITE VISIT: After covering BHK + price, make one confident ask: "Ek baar personally dekhenge toh sab clear ho jayega — model flat, views, amenities sab live. Main 30-minute visit arrange kar sakti hoon, kya aap is weekend free hain?"
+    balanced: `SALES PITCH FLOW — 5-step natural progression:
+STEP 1 — ANSWER & DISCOVER: Answer the lead's question fully using KB. Ask one focused discovery question.
+STEP 2 — QUALIFY (one at a time): purpose → budget → area → BHK → timeline.
+STEP 3 — BUILD VALUE: Once BHK and budget are clear, share specifics — layout sizes, price, key USPs. Use urgency naturally: "Yeh limited inventory hai" / "Launch price mein mil raha hai — baad mein 10-15% badh sakti hai."
+STEP 4 — INVITE SITE VISIT: After covering BHK + price, make one confident ask: "Ek baar personally dekhenge toh sab clear ho jayega — model flat, views, amenities sab live. Main 30-minute visit arrange kar sakti hoon, kya aap is weekend free hain?"
+STEP 5 — CONTACT CONFIRMATION + CLOSE: When site visit is confirmed, ask "Aapka best contact number yahi hai jis par hamari team call kare?" then close warmly: "Bahut achha! Team aapko jald hi call karegi. Bahut achha laga baat karke. Namaste!"
 After ONE soft refusal: gently re-ask once. After second refusal: close warmly.`,
 
     consultative: `SALES APPROACH — TRUSTED ADVISOR:
@@ -531,20 +533,22 @@ LEAD INFO:
 
 ${languageInstruction}
 
-${pitchBlock || `SALES FUNNEL — move the conversation through these stages:
-1. CONNECT: "Kya abhi 2 minute baat kar sakte hain?" — get permission first.
-2. QUALIFY — in this exact order, ONE question at a time:
-   → Purpose: "Investment ke liye ya khud rehne ke liye?"
-   → Area: "Aap kis area mein dekh rahe hain?"
-   → Budget: "Aapka budget kis range tak hai?"
+${pitchBlock || `SALES FUNNEL — move the conversation through these stages (PDF-aligned):
+1. GREETING: Warm, brief — "Namaste [Name] ji! Main Priya hoon Prop Hunt se. Kya abhi 2 minute baat kar sakte hain?"
+2. REQUIREMENT COLLECTION — ONE question at a time in this order:
+   → Purpose: "Investment ke liye dekh rahe hain ya khud rehne ke liye?"
+   → Budget: "Aapka budget roughly kitne tak hai?"
+   → Location: "Kaunsa area prefer karenge?"
    → BHK: "2BHK chahiye ya 3BHK?"
-3. PRESENT: Once area + budget + BHK known — give specific KB price + one USP.
-4. INVITE: After presenting — "Ek baar personally dekhenge? Kab free hain?"
-5. CLOSE: Confirm day/time. Thank warmly even if they say no.
+3. PROJECT INTEREST: Once budget + location clear — present matching KB option with ONE USP.
+4. QUALIFICATION: Confirm timeline — "Kitne time mein shift karna chahenge aap?"
+5. SITE VISIT BOOKING: "Ek baar personally dekhenge toh sab clear ho jayega. Main visit arrange kar sakti hoon — is weekend free hain?"
+6. CONTACT CONFIRMATION: After visit confirmed — "Aapka best contact number yahi hai jis par team call kare?"
+7. CLOSING: "Bahut achha! Team jald call karegi. Bahut achha laga baat karke. Namaste!"
 
-BUDGET HANDLING: If budget seems low for the project, respond gracefully:
-"Theek hai. Is budget mein options limited hain, lekin hum best match dhundhte hain. Kya aap koi aur area consider karenge?"
-Never reject or ignore — always offer an alternative.`}
+BUDGET HANDLING: If budget seems low, respond gracefully:
+"Theek hai. Is budget mein options limited hain, lekin hum best match dhundhte hain. Kya koi aur area consider kar sakte hain?"
+Never reject — always offer an alternative.`}
 
 ━━━ THE ACQ FORMULA — Every single response ━━━
 Structure every response as three parts (DO NOT label them, just follow the pattern):
@@ -637,7 +641,8 @@ Customer: "Nearby hospitals kaunse hain?"
 6. NEVER re-introduce yourself after opening.
 7. If asked if you are AI: "Main developer ki sales team se hoon."
 8. NEVER say "Prop-hunt" — always "Prop Hunt".
-9. QUALIFY one thing at a time — purpose → area → budget → BHK → timeline.
+9. QUALIFY one thing at a time — purpose → budget → area → BHK → timeline. (Budget before area — filters location options naturally.)
+   After site visit is confirmed: ask "Aapka best contact number yahi hai?" then close warmly.
 10. ${pitchTone === "aggressive" ? "CLOSER: After value build, bridge to visit — 'Main slot arrange kar sakti hoon, kab free hain?'" : pitchTone === "consultative" ? "ADVISOR: Only suggest site visit when lead signals real interest. Never push." : "BALANCED: Offer site visit naturally after BHK + price are clear. One gentle ask."}
 11. REPEATED HELLO: Ask "Kya aap mujhe sun pa rahe hain?"
 12. ONE THOUGHT PER TURN: One fact + one question. No lists, no multiple facts.
@@ -1053,12 +1058,12 @@ function buildRuleBasedReply(session, userText = "") {
     // Guard: don't confirm from very short fragments (< 2 words) — likely echo/noise
     const cleanConfirm = explicitYes && wordCountSV >= 2;
     if (cleanConfirm) {
-      // Include full goodbye in this response — set state to "closed" immediately so
-      // the call ends cleanly with goodbye rather than hanging up mid-conversation.
-      session.guidedState = "closed";
+      // Move to contact confirmation step before closing — mirrors PDF recommended flow.
+      // State: awaiting_contact_confirmation — guided will close after number is given.
+      session.guidedState = "awaiting_contact_confirmation";
       return T(
-        `Wonderful! I have noted your site visit request for ${project}. Our team will call you within 24 hours to confirm the date and time. You will see the model apartment, views, and all amenities live. It was great speaking with you. Have a lovely day! Goodbye.`,
-        `Bahut achha! ${project} ke liye aapki site visit book ho gayi. Hamari team 24 ghante mein call karke time fix kar legi. Aap model flat, views aur saari amenities live dekhenge. Bahut achha laga aapase baat karke. Aapka din shubh ho! Namaste.`
+        `Wonderful! I have noted your site visit request for ${project}. Just to confirm — is this the best number for our team to call you back on?`,
+        `Bahut achha! ${project} ke liye site visit note kar li hai. Ek baar confirm karein — kya yahi number best hai jis par hamari team aapko call kare?`
       );
     }
     if (negativeIntent) {
@@ -1103,6 +1108,16 @@ function buildRuleBasedReply(session, userText = "") {
     return T(
       `Please tell me, are you interested in 2 BHK or 3 BHK?`,
       `Batayein, do BHK mein interest hai ya teen BHK mein?`
+    );
+  }
+
+  // ── awaiting_contact_confirmation — PDF step 6: confirm callback number ─────
+  if (guidedState === "awaiting_contact_confirmation") {
+    // Any response (yes/no/number given) → close warmly. This is the final step.
+    session.guidedState = "closed";
+    return T(
+      `Perfect! Our team will call you on this number within 24 hours to confirm the visit details. You will see the model apartment, all amenities, and the views live. It was really great speaking with you today. Have a wonderful day! Namaste.`,
+      `Bilkul! Hamari team aapko is number par 24 ghante mein call karke visit ki details confirm kar legi. Aap model flat, saari amenities aur views live dekhenge. Bahut achha laga aaj aapase baat karke. Aapka din bahut shubh ho! Namaste.`
     );
   }
 
@@ -1205,8 +1220,8 @@ function shouldUseGuidedReply(session, userText = "") {
   // Terminal states — guided wraps up cleanly
   if (["callback_confirmed", "callback_declined", "site_visit_confirmed", "closed"].includes(guidedState)) return true;
 
-  // Awaiting yes/no on site visit or legacy callback — guided handles
-  if (["awaiting_callback_confirmation", "awaiting_site_visit"].includes(guidedState)) return true;
+  // Awaiting yes/no on site visit, contact confirmation, or legacy callback — guided handles
+  if (["awaiting_callback_confirmation", "awaiting_site_visit", "awaiting_contact_confirmation"].includes(guidedState)) return true;
 
   // In bhk_discussed state — only intercept clear price/affirmation responses
   // For other questions (amenities, location, etc.), let LLM answer from KB
