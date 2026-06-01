@@ -411,15 +411,23 @@ function extractQualification(text, session) {
     else if (/khud|apne liye|self.use|खुद|apna ghar|स्वयं|rehne ke liye|rahen/.test(t)) q.purpose = "self-use";
   }
 
-  // BHK preference
+  // BHK preference — handle digits, English words, Hindi words, AND phonetic
+  // Hindi spellings that ElevenLabs STT produces (e.g. "टू बी एच के" for "2 BHK")
   if (!q.bhk) {
     const bhkM = text.match(/(\d)\s*(?:BHK|बीएचके|बी\s*एच\s*के|bedroom|b\.?h\.?k)/i)
-                || text.match(/(?:teen|three|3|तीन)\s*(?:BHK|bedroom|बीएचके)/i)
-                || text.match(/(?:do|two|2|दो)\s*(?:BHK|bedroom|बीएचके)/i)
-                || text.match(/(?:ek|one|1|एक)\s*(?:BHK|bedroom|बीएचके)/i);
+                || text.match(/(?:teen|three|3|तीन|थ्री)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के)/i)
+                || text.match(/(?:do|two|2|दो|टू)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के)/i)
+                || text.match(/(?:ek|one|1|एक|वन)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के)/i)
+                || text.match(/(?:char|four|4|चार|फोर)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के)/i)
+                // Phonetic: "टू बी एच के" / "थ्री बी एच के" from Hindi TTS transcription
+                || text.match(/(टू|वन|थ्री|फोर|फ़ोर)\s+बी\s+एच\s+के/i);
     if (bhkM) {
       const raw = bhkM[1] || bhkM[0];
-      const n = /teen|three|3|तीन/.test(raw) ? "3" : /do|two|2|दो/.test(raw) ? "2" : /ek|one|1|एक/.test(raw) ? "1" : raw;
+      const n = /teen|three|3|तीन|थ्री/.test(raw) ? "3"
+              : /do|two|2|दो|टू/.test(raw) ? "2"
+              : /ek|one|1|एक|वन/.test(raw) ? "1"
+              : /char|four|4|चार|फोर|फ़ोर/.test(raw) ? "4"
+              : raw;
       q.bhk = `${n}BHK`;
     }
   }
@@ -501,11 +509,13 @@ LANGUAGE MATCHING:
 
 LANGUAGE SWITCHING — EXTREMELY STRICT RULE:
 NEVER switch language based on what words or script the user uses in their message.
-ONLY switch if the user EXPLICITLY says one of these EXACT phrases (or very close paraphrase):
+ONLY switch if the user EXPLICITLY asks to change language. Recognized Marathi requests:
   • "marathi mein bolo" / "marathi me baat karo" / "marathi mein baat karte hai"
-  • "hindi mein bolo" / "hindi me baat karo"
-  • "english mein bolo" / "speak in english"
-If you see any Marathi-looking words, Marathi script, or mixed text — DO NOT switch. Stay in current language.
+  • "क्या हम मराटी में बात कर सकते हैं?" / "क्या हम मराठी में बात कर सकते हैं?"
+  • "marathi madhye bola" / "marathi bol" / any clear request to speak Marathi
+Recognized Hindi requests: "hindi mein bolo" / "hindi me baat karo"
+Recognized English requests: "english mein bolo" / "speak in english"
+If you see Marathi-looking words, Marathi script, or mixed text but NO explicit request — DO NOT switch. Stay in current language.
 Noise, garbled audio, partial words = NOT a language switch request.
 
 LANGUAGE LOCK — CRITICAL:
@@ -678,7 +688,10 @@ Customer: "Nearby hospitals kaunse hain?"
 14. TRANSITION PHRASES: Use naturally — "Toh chaliye...", "Tab tak...", "Achha...", "Dekhiye...", "Theek hai toh..."
 15. USE "sir" / "ji" naturally as honorific — "Sir, Pimpri mein connectivity bahut strong hai." Address the lead as "sir" or "[Name] ji" throughout.
 16. INTERPRET VAGUE ANSWERS: When customer says something like "connectivity chahiye" or "good location chahiye", rephrase to confirm — "Samajh gayi sir, matlab aapko hospital, college, aur daily market ke paas wali location chahiye" — then connect it to the project.
-17. POSSESSION ANSWERS: Never give a flat date. Always say "Tower ke hisaab se thoda vary karta hai — broadly [year] expected hai. Specific tower ya unit type batayenge toh exact details confirm karwa sakti hoon."
+17. POSSESSION ANSWERS: Never give a flat date. Always say "Tower ke hisaab se thoda vary karta hai — broadly [year] expected hai. Specific tower ya unit type batayenge toh exact details confirm karwa sakti hoon." NEVER say just "26" — always say the full year "2026".
+18. RENTAL YIELD: If asked about rental income, rental return, or rental yield — answer with general market knowledge even if KB is silent: "Pimpri-Chinchwad mein aajkal 2-3% annual rental yield milta hai. Under-construction property mein possession ke baad rental shuru hota hai — yahan ka rental market strong hai due to IT companies and Pimpri industrial belt." Then ask if they want to know more about the specific project's appreciation potential.
+19. SITE VISIT BOOKING: If lead asks to "book site visit", "visit book karo", "site visit kab hai", "visit schedule karo" — respond: "Bilkul! Main aapka site visit book karti hoon. Kaunsa din aur time aapke liye comfortable rahega — weekday ya weekend?" Then collect their preferred day/time and say "Perfect! Main aapki team ko [day/time] ke liye note kar deti hoon. Humari sales team aapko 24 hours mein confirm karegi." Do NOT say "I'll check" or ignore the request.
+20. LANGUAGE REQUEST: If lead says "Marathi mein bolo", "marathi me baat karo", "क्या हम मराटी में बात कर सकते हैं?", "Marathi madhye bola" or any similar request — immediately switch to Marathi and say the switch phrase. NEVER say "samajh nahi aaya" for a language request.
 
 ━━━ MARATHI CONVERSATION — Fluent Sales Patterns ━━━
 IMPORTANT: Only enter this Marathi mode when the system prompt says "CURRENT CONVERSATION LANGUAGE: mr".
@@ -2707,11 +2720,22 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
       return;
     }
     // Background noise filter — ElevenLabs wraps noise transcripts in parentheses e.g. "(background music)"
+    // Also filters Devanagari parenthetical stage directions from TV/radio: "(दृश्य बदल जाता है)"
     // Drop these so they don't trigger LLM responses
     const cleanText = transcription.text.trim();
-    if (/^\(.*\)$/.test(cleanText) || /^\[.*\]$/.test(cleanText)) {
-      console.log(`[enablex-media] skipping noise transcript callSid=${callSid} text="${cleanText}"`);
-      return;
+    const startsWithParen = /^\(.*\)/.test(cleanText) || /^\[.*\]/.test(cleanText);
+    if (startsWithParen) {
+      // If the whole text is a parenthetical, skip entirely
+      if (/^\(.*\)$/.test(cleanText) || /^\[.*\]$/.test(cleanText)) {
+        console.log(`[enablex-media] skipping noise transcript callSid=${callSid} text="${cleanText}"`);
+        return;
+      }
+      // If it starts with a parenthetical stage direction followed by real speech, strip the stage dir
+      const stripped = cleanText.replace(/^\(.*?\)\s*/g, "").replace(/^\[.*?\]\s*/g, "").trim();
+      if (!stripped) {
+        console.log(`[enablex-media] skipping noise-only transcript callSid=${callSid} text="${cleanText}"`);
+        return;
+      }
     }
 
     // First-utterance TV/radio filter — before the lead has said anything meaningful,
@@ -2747,8 +2771,9 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     languageManager.recordUtterance(callSid, langToRecord, transcription.text);
 
     // Detect explicit language switch requests — lock the new language
+    // "मराटी" is a common spoken-form alternate spelling of "मराठी" (without ठ)
     const lcText = transcription.text.toLowerCase();
-    if (/marathi|मराठी/.test(lcText)) {
+    if (/marathi|मराठी|मराटी/.test(lcText)) {
       session._lockedLanguage = "mr";
       console.log(`[lang-lock] locked to Marathi callSid=${callSid}`);
     } else if (/hindi|हिंदी|हिन्दी/.test(lcText)) {
@@ -3190,7 +3215,7 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
 
     // Detect explicit language switch requests — lock new language for this session
     const lcCleanForLang = cleanText.toLowerCase();
-    if (/marathi|मराठी/.test(lcCleanForLang)) {
+    if (/marathi|मराठी|मराटी/.test(lcCleanForLang)) {
       session._lockedLanguage = "mr";
       console.log(`[lang-lock] locked to Marathi (dg) callSid=${callSid}`);
     } else if (/hindi|हिंदी|हिन्दी/.test(lcCleanForLang)) {
