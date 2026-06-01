@@ -408,7 +408,8 @@ function extractQualification(text, session) {
   // Purpose: investment vs self-use
   if (!q.purpose) {
     if (/invest|गुंतवणूक|निवेश|rental|rent|kiraya|किराया/.test(t)) q.purpose = "investment";
-    else if (/khud|apne liye|self.use|खुद|apna ghar|स्वयं|rehne ke liye|rahen/.test(t)) q.purpose = "self-use";
+    // "सेल्फ यूज" is the common Hinglish phonetic form; "self yuz/use" covers romanized variants
+    else if (/khud|apne liye|self[\s-]?use|self[\s-]?yuz|सेल्फ[\s-]?यूज|खुद|apna ghar|स्वयं|rehne ke liye|rahen|end[\s-]?use|खुद के लिए|खुद रहना/.test(t)) q.purpose = "self-use";
   }
 
   // BHK preference — handle digits, English words, Hindi words, AND phonetic
@@ -447,8 +448,9 @@ function extractQualification(text, session) {
     for (const [word, digit] of Object.entries(wordNumMap)) {
       normText = normText.replace(new RegExp(`\\b${word}\\b`, "gi"), digit);
     }
-    const croreM = normText.match(/(\d+(?:\.\d+)?)\s*(?:crore|cr\.?\b|करोड़|कोटी)/i);
-    const lakhM  = normText.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख|लख)/i);
+    // "karor/karore/karod" = Hinglish phonetic spellings of crore used in speech
+    const croreM = normText.match(/(\d+(?:\.\d+)?)\s*(?:crore|cr\.?\b|करोड़|कोटी|karor|karore|karod|crore)/i);
+    const lakhM  = normText.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख|लख|lacs)/i);
     if (croreM) q.budget = `${croreM[1]} crore`;
     else if (lakhM) q.budget = `${lakhM[1]} lakh`;
   }
@@ -2266,12 +2268,17 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
   const playbackMs = chunks.length * 20;
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
-  session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 200;  // +200ms — just enough for last chunk to reach phone
-  session.telephony.echoSuppressionUntil  = Date.now() + playbackMs + 200;  // +200ms — minimal tail; reduces dead zone eating "haan boliye"
+  session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 200;
+  // Cap echo suppression at 2.5s — EnableX has hardware echo cancellation for the rest.
+  // Old value was playbackMs + 200ms which could be 9+ seconds for the greeting,
+  // completely blocking the user's first response and making them repeat themselves.
+  session.telephony.echoSuppressionUntil  = Date.now() + Math.min(playbackMs + 200, 2500);
   // Opening greeting protection — cap at 9s max (opening audio is ≤8.8s after word cap fix).
   // Old code: no cap → 16s audio → user blocked for 17s → 1011 Deepgram close.
   if (label && label.startsWith("opening-greeting")) {
-    session.telephony.openingProtectionUntil = Date.now() + Math.min(playbackMs, 9000) + 800;
+    // Cap at 3.5s — greeting audio is ~4-5s but we want user to be able to say
+    // "haan" after ~3s of hearing the intro rather than waiting for the full audio.
+    session.telephony.openingProtectionUntil = Date.now() + Math.min(playbackMs, 3500);
   }
   if (session.inboundAudio && !session.inboundAudio.processing) {
     session.inboundAudio.chunks = [];
@@ -2380,7 +2387,7 @@ function createMulawStreamQueue(ws, session, label = "stream") {
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
   session.telephony.agentSpeakingUntil   = Date.now() + 30000; // tentative — updated on close()
-  session.telephony.echoSuppressionUntil = Date.now() + 30000;
+  session.telephony.echoSuppressionUntil = Date.now() + 2500;  // 2.5s cap — updated on close() with actual duration
   if (session.inboundAudio) { session.inboundAudio.chunks = []; session.inboundAudio.speechFrames = 0; }
 
   const queue   = [];
@@ -2450,8 +2457,8 @@ function createMulawStreamQueue(ws, session, label = "stream") {
       // +200ms margins on both agentSpeakingUntil / echoSuppressionUntil — minimal tail.
       const pendingMs = (totalSent + queue.length) * 20;
       session.telephony.lastPlaybackMs       = pendingMs;
-      session.telephony.agentSpeakingUntil   = Date.now() + pendingMs + 200;  // +200ms only
-      session.telephony.echoSuppressionUntil = Date.now() + pendingMs + 200;  // +200ms — tight tail to stop swallowing "haan boliye"
+      session.telephony.agentSpeakingUntil   = Date.now() + pendingMs + 200;
+      session.telephony.echoSuppressionUntil = Date.now() + Math.min(pendingMs + 200, 2500); // cap at 2.5s
       console.log(`[mulaw-queue] closed totalSent=${totalSent} pending=${queue.length} playbackMs=${pendingMs} callSid=${session.callSid}`);
     },
 
