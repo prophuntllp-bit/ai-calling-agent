@@ -1208,8 +1208,12 @@ function shouldUseGuidedReply(session, userText = "") {
   // Awaiting yes/no on site visit or legacy callback — guided handles
   if (["awaiting_callback_confirmation", "awaiting_site_visit"].includes(guidedState)) return true;
 
-  // In bhk_discussed state — guided handles price follow-up and positive affirmations
-  if (guidedState === "bhk_discussed") return true;
+  // In bhk_discussed state — only intercept clear price/affirmation responses
+  // For other questions (amenities, location, etc.), let LLM answer from KB
+  if (guidedState === "bhk_discussed") {
+    const isInfoRequest = /\b(bataiye|batao|bata|kya|kaise|kaisa|kaisi|kitna|kitne|kimat|price|cost|haan|ok|okay|theek|zaroor|bilkul|sure|yes|yes please|batao|bolo)\b|हाँ|जी|बताओ|ठीक|बिल्कुल/i.test(text);
+    return isInfoRequest;
+  }
 
   // price_discussed — guided handles positive/close, LLM handles further questions
   if (guidedState === "price_discussed" && /yes|haan|ji\b|sure|okay|ok|theek|bilkul|zaroor|ha\b/.test(text)) return true;
@@ -1229,7 +1233,7 @@ function shouldUseGuidedReply(session, userText = "") {
 async function getLLMResponse(session, userText) {
   const language = languageManager.getLanguage(session.callSid);
   session.history.push({ role: "user", content: userText });
-  session.history = session.history.slice(-10);  // keep last 5 turns — enough context, avoids history replay
+  session.history = session.history.slice(-16);  // keep last 8 turns — longer calls need more context
 
   // Guided reply path — pure in-memory, ~0ms (handles pricing/BHK/location/callback)
   // Returns null when it wants LLM to take over (e.g. user is confused, not answering config question)
@@ -1268,9 +1272,9 @@ async function getLLMResponse(session, userText) {
 
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
 
-  // Send last 5 turns (10 messages) — needed for longer conversations (8+ min calls)
+  // Send last 8 turns (16 messages) — needed for longer conversations (8+ min calls)
   // so agent remembers investment/BHK/budget stated early in the call.
-  const historyContext = session.history.slice(-10).slice(0, -1);
+  const historyContext = session.history.slice(-16).slice(0, -1);
   const currentTurn   = { role: "user", content: `[CURRENT — respond to this only]: ${userText}` };
   const messages = [{ role: "system", content: systemPrompt }, ...historyContext, currentTurn];
 
@@ -1494,13 +1498,15 @@ async function getOpeningMessage(session) {
 function emotionFromContext(text = "", state = {}) {
   const lowered = text.toLowerCase();
   if (state.stage === "opening") return "warm";
-  // Excitement triggers — user expressing interest, mentioning nice features, positives
-  if (/(benefit|amenity|feature|offer|launch|badhiya|achha|accha|acha|wah|vah|pasand|sundar|bढ़िया|शानदार|बढ़िया|अच्छा|वाह|पसंद|सुंदर|interest|good|great|nice|love|like)/.test(lowered)) return "excited";
-  // Empathy triggers — concerns, price sensitivity, hesitation
-  if (/(price|budget|expensive|concern|issue|problem|sochna|baad|later|costly|mehenga|महंगा|सोचना|बाद में|परेशान|दिक्कत|theek nahi|nahi chahiye|nahi chahie)/.test(lowered)) return "empathetic";
-  // Professional triggers — site visit, booking, scheduling
-  if (/(visit|schedule|book|callback|meeting|dekhna|site|confirm|date|time|slot|aana|aaun|आना|देखना|बुक|कब)/.test(lowered)) return "professional";
-  // Default — warm (not neutral) — real estate calls benefit from a warm baseline
+  // Farewell / closing — warm and gracious
+  if (/(bye|goodbye|thank you|thanks|dhanyawaad|shukriya|alvida|namaste|have a|good day|shubh|aapka din)/.test(lowered)) return "warm";
+  // Excitement triggers — user expressing genuine interest or positives
+  if (/(benefit|amenity|feature|offer|launch|badhiya|achha|accha|acha|wah|vah|pasand|sundar|शानदार|बढ़िया|अच्छा|वाह|पसंद|सुंदर|interest|good|great|nice|love|like|perfect|zaroor|bilkul|haan ji)/.test(lowered)) return "excited";
+  // Empathy triggers — concerns, price sensitivity, hesitation, negative response
+  if (/(price|budget|expensive|concern|issue|problem|sochna|baad|later|costly|mehenga|महंगा|सोचना|बाद में|परेशान|दिक्कत|theek nahi|nahi chahiye|nahi chahie|nahi|nahin|na\b)/.test(lowered)) return "empathetic";
+  // Professional triggers — information requests, site visit, scheduling
+  if (/(visit|schedule|book|callback|meeting|dekhna|site|confirm|date|time|slot|aana|aaun|आना|देखना|बुक|कब|location|kahan|possession|rera|loan|emi|floor|parking|amenities)/.test(lowered)) return "professional";
+  // Default — warm baseline
   return "warm";
 }
 
@@ -2415,11 +2421,11 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   //   too high sounds fake/over-the-top on phone calls; too low sounds robotic.
   // similarity_boost: 1.0 keeps voice identity consistent.
   const ESETTINGS = {
-    warm:         { stability: 0.30, similarity_boost: 1.0, style: 0.35, speed: 0.95 },  // friendly, welcoming — more natural warmth
-    excited:      { stability: 0.20, similarity_boost: 1.0, style: 0.50, speed: 1.05 },  // "वाह!", genuine excitement — like Agni
-    empathetic:   { stability: 0.50, similarity_boost: 1.0, style: 0.20, speed: 0.90 },  // budget concerns — soft and understanding
-    professional: { stability: 0.55, similarity_boost: 1.0, style: 0.15, speed: 0.98 },  // site visit confirmations — clear & confident
-    neutral:      { stability: 0.35, similarity_boost: 1.0, style: 0.30, speed: 0.97 },  // default — more expressive than before
+    warm:         { stability: 0.22, similarity_boost: 0.95, style: 0.45, speed: 0.95 },  // friendly, welcoming — more natural warmth
+    excited:      { stability: 0.15, similarity_boost: 0.95, style: 0.60, speed: 1.05 },  // "वाह!", genuine excitement — like Agni
+    empathetic:   { stability: 0.35, similarity_boost: 0.95, style: 0.35, speed: 0.88 },  // budget concerns — soft and understanding
+    professional: { stability: 0.40, similarity_boost: 0.95, style: 0.28, speed: 0.97 },  // site visit confirmations — clear & confident
+    neutral:      { stability: 0.25, similarity_boost: 0.95, style: 0.40, speed: 0.97 },  // default — more expressive than before
   };
   const voiceSettings = ESETTINGS[emotion] || ESETTINGS.neutral;
 
@@ -2427,7 +2433,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   const language = languageManager.getLanguage(callSid);
   // Push user turn to history (same as getLLMResponse line 1059)
   session.history.push({ role: "user", content: userText });
-  session.history = session.history.slice(-10);
+  session.history = session.history.slice(-16);
   const knowledgeContext = (
     session.dynamicVariables?.knowledge_base ||
     (await getKnowledgeContext(session.campaign?.project_id || session.lead.project_id, userText).catch(() => ""))
@@ -2436,7 +2442,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
     ? (languageManager.getBaseLanguage(callSid) || "hi")
     : language;
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
-  const historyContext = session.history.slice(-10).slice(0, -1);
+  const historyContext = session.history.slice(-16).slice(0, -1);
   const messages = [
     { role: "system", content: systemPrompt },
     ...historyContext,
@@ -2702,6 +2708,28 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     // Upgrade status so dashboard shows call is active (not stuck at stream_started)
     if (session.status === "stream_started") session.status = "active";
 
+    // ── Goodbye detection — intercept before LLM/streaming, close call immediately ──
+    const lcCleanEn = cleanText.toLowerCase().replace(/[।!?.]/g, "").trim();
+    const wordCountEn = lcCleanEn.split(/\s+/).filter(w => w.length > 0).length;
+    const isGoodbyeEn =
+      /^(bye|goodbye|alvida|shukriya|dhanyawaad|dhanyavaad|tata|ok bye|theek hai bye|chalte hain|chal theek|chhodo|nahi chahiye|nahin chahiye|band karo|khatam|no thanks|no thank you|not interested|abhi nahi|nahi abhi)\b/i.test(lcCleanEn) ||
+      (/\b(bye|goodbye|dhanyawaad|shukriya|alvida)\b/i.test(lcCleanEn) && wordCountEn <= 5);
+    if (isGoodbyeEn && !isTerminalGuidedState(session)) {
+      console.log(`[agent] goodbye detected (enablex path) callSid=${callSid} text="${cleanText}"`);
+      const farewellLang = languageManager.getBaseLanguage(callSid) || "hi";
+      const goodbyeText = (farewellLang === "hi" || farewellLang === "hinglish")
+        ? "Theek hai! Agar kabhi bhi property dekhni ho, toh hamare paas zaroor aayein. Dhanyawaad! Namaste."
+        : "No problem! Feel free to reach out anytime. Thank you and goodbye!";
+      session.guidedState = "closed";
+      const goodbyeAudio = await synthesizeSpeech(session, goodbyeText).catch(() => null);
+      if (goodbyeAudio && ws.readyState === WebSocket.OPEN && !session.closed) {
+        clearEnablexMedia(ws, session);
+        sendEnablexMedia(ws, session, goodbyeAudio, "goodbye");
+      }
+      scheduleAgentSideHangup(ws, session, "user-goodbye");
+      return;
+    }
+
     // ── ElevenLabs streaming path (low-latency, TTFA ~800ms) ──────────────────
     // Pipes LLM tokens directly to ElevenLabs WS — audio starts before LLM finishes.
     // This is the same fast path used by the Deepgram pipeline.
@@ -2717,6 +2745,18 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     });
     if (elevenStreamed !== null) {
       console.log(`[agent] streaming callSid=${callSid} total=${Date.now()-t0}ms reply="${(elevenStreamed||"").slice(0,60)}"`);
+      // Check terminal state first — streaming path bypasses guided-reply, so LLM may have
+      // produced a farewell without setting guidedState. Check the reply text itself.
+      const streamedLower = (elevenStreamed || "").toLowerCase();
+      const streamedIsFarewell = /\b(namaste|goodbye|good bye|alvida|dhanyawaad|shukriya|thank you for your time|have a (great|lovely|nice|good) day|aapka din shubh)\b/i.test(streamedLower);
+      if (streamedIsFarewell && !isTerminalGuidedState(session)) {
+        session.guidedState = "closed";
+      }
+      if (isTerminalGuidedState(session)) {
+        console.log(`[agent] terminal state (streaming) scheduling hangup callSid=${callSid} state=${session.guidedState}`);
+        scheduleAgentSideHangup(ws, session, session.guidedState);
+        return;
+      }
       // Schedule silence nudge (mirrors processTranscriptDirect behaviour)
       const nudgeLang = languageManager.getBaseLanguage(callSid) || "hi";
       const nudgeDelay = parseInt(process.env.SILENCE_NUDGE_MS || "22000", 10);

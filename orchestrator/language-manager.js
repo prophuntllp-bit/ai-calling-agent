@@ -75,8 +75,13 @@ class LanguageManager {
     // 2. OR the initial language was a preference (not verified by STT yet)
     // 3. OR new language has 2+ votes (confirmed pattern, not noise)
     const initialPreference = currentLanguage === baseLanguage(session.preferredLanguage || "auto");
-    const confirmedSwitch = nextVotes >= 2;
-    const firstDetectedSwitch = hasMeaningfulText(text) && nextVotes === 1 && (initialPreference || !session.languageConfirmed);
+    // Require 3 confirmed votes before auto-switching between similar scripts (hi↔mr).
+    // ElevenLabs STT often misidentifies Hindi as Marathi on single utterances.
+    // English is distinctive enough that a single confident detection can switch.
+    const isSimilarScript = (currentLanguage === "hi" && normalizedLanguage === "mr") ||
+                            (currentLanguage === "mr" && normalizedLanguage === "hi");
+    const confirmedSwitch = isSimilarScript ? nextVotes >= 3 : nextVotes >= 2;
+    const firstDetectedSwitch = !isSimilarScript && hasMeaningfulText(text) && nextVotes === 1 && (initialPreference || !session.languageConfirmed);
     const shouldSwitch = firstDetectedSwitch || confirmedSwitch;
 
     if (shouldSwitch) {
