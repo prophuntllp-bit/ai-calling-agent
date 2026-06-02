@@ -990,20 +990,58 @@ async function transcribeAudioDirect(audioBuffer, language = "auto") {
   const elevenKey = process.env.ELEVENLABS_API_KEY;
   const sarvamKey = process.env.SARVAM_API_KEY;
 
-  // ── ElevenLabs Scribe STT (preferred when key is set) ──────────────────────
+  // STT_PROVIDER controls which engine runs first.
+  // "sarvam"     → Sarvam Saarika v2.5 first (better for Hindi/Marathi/Hinglish)
+  // "elevenlabs" → ElevenLabs Scribe first (previous default)
+  // Default      → sarvam (when SARVAM_API_KEY is set)
+  const sttProvider = (process.env.STT_PROVIDER || "sarvam").toLowerCase();
+  const useSarvamFirst = sttProvider === "sarvam" && !!sarvamKey;
+
+  // ── Sarvam Saarika v2.5 (primary when STT_PROVIDER=sarvam) ───────────────
+  if (useSarvamFirst) {
+    const wav = ensureWavBuffer(audioBuffer);
+    const form = new FormData();
+    form.append("file", wav, { filename: "audio.wav", contentType: "audio/wav" });
+    form.append("model", "saarika:v2.5");
+    const langCode = SARVAM_LANG_MAP[language] || (language === "auto" ? undefined : language);
+    if (langCode) form.append("language_code", langCode);
+    try {
+      const t0 = Date.now();
+      const response = await timed("stt_sarvam", () =>
+        axios.post(
+          `${process.env.SARVAM_API_URL || "https://api.sarvam.ai"}/speech-to-text`,
+          form,
+          {
+            headers: { ...form.getHeaders(), "api-subscription-key": sarvamKey },
+            timeout: 12000,
+          }
+        )
+      );
+      const d = response.data;
+      const detectedLang = d.language_code?.split("-")[0] || language;
+      console.log(`[stt-sarvam] latency=${Date.now()-t0}ms lang=${detectedLang} text="${(d.transcript || "").slice(0, 80)}"`);
+      return {
+        text:     d.transcript || "",
+        language: detectedLang,
+      };
+    } catch (err) {
+      console.warn("[stt-sarvam] failed, falling back to ElevenLabs:", err.message);
+      // fall through to ElevenLabs below
+    }
+  }
+
+  // ── ElevenLabs Scribe STT (primary when STT_PROVIDER=elevenlabs, else fallback) ──
   if (elevenKey) {
     const wav = ensureWavBuffer(audioBuffer);
     const form = new FormData();
     form.append("file", wav, { filename: "audio.wav", contentType: "audio/wav" });
     form.append("model_id", "scribe_v1");
-    // Map short codes to BCP-47; "auto" → let ElevenLabs auto-detect
     const ELEVEN_LANG_MAP = {
       "hi": "hi", "en": "en", "mr": "mr", "ta": "ta",
       "te": "te", "kn": "kn", "gu": "gu", "bn": "bn", "pa": "pa",
     };
     const langCode = language === "auto" ? null : (ELEVEN_LANG_MAP[language] || language);
     if (langCode) form.append("language_code", langCode);
-
     try {
       const t0 = Date.now();
       const response = await timed("stt_elevenlabs", () =>
@@ -1024,44 +1062,43 @@ async function transcribeAudioDirect(audioBuffer, language = "auto") {
         language: detectedLang,
       };
     } catch (err) {
-      console.warn("[stt-elevenlabs] failed, falling back to Sarvam:", err.message);
-      // fall through to Sarvam below
+      console.warn("[stt-elevenlabs] failed, falling back to microservice:", err.message);
     }
   }
 
-  // ── Sarvam STT fallback ────────────────────────────────────────────────────
-  if (!sarvamKey) return transcribeAudio(audioBuffer, language);
-
-  const wav = ensureWavBuffer(audioBuffer);
-  const form = new FormData();
-  form.append("file", wav, { filename: "audio.wav", contentType: "audio/wav" });
-  form.append("model", "saarika:v2.5");
-
-  const langCode = SARVAM_LANG_MAP[language] || (language === "auto" ? undefined : language);
-  if (langCode) form.append("language_code", langCode);
-
-  try {
-    const t0 = Date.now();
-    const response = await timed("stt_direct", () =>
-      axios.post(
-        `${process.env.SARVAM_API_URL || "https://api.sarvam.ai"}/speech-to-text`,
-        form,
-        {
-          headers: { ...form.getHeaders(), "api-subscription-key": sarvamKey },
-          timeout: 12000,
-        }
-      )
-    );
-    const d = response.data;
-    console.log(`[stt-direct] latency=${Date.now()-t0}ms lang=${d.language_code}`);
-    return {
-      text:     d.transcript || "",
-      language: d.language_code?.split("-")[0] || language,
-    };
-  } catch (err) {
-    console.warn("[stt-direct] failed, falling back to microservice:", err.message);
-    return transcribeAudio(audioBuffer, language);  // graceful fallback
+  // ── Sarvam fallback when STT_PROVIDER=elevenlabs but ElevenLabs failed ────
+  if (!useSarvamFirst && sarvamKey) {
+    const wav = ensureWavBuffer(audioBuffer);
+    const form = new FormData();
+    form.append("file", wav, { filename: "audio.wav", contentType: "audio/wav" });
+    form.append("model", "saarika:v2.5");
+    const langCode = SARVAM_LANG_MAP[language] || (language === "auto" ? undefined : language);
+    if (langCode) form.append("language_code", langCode);
+    try {
+      const t0 = Date.now();
+      const response = await timed("stt_sarvam_fb", () =>
+        axios.post(
+          `${process.env.SARVAM_API_URL || "https://api.sarvam.ai"}/speech-to-text`,
+          form,
+          {
+            headers: { ...form.getHeaders(), "api-subscription-key": sarvamKey },
+            timeout: 12000,
+          }
+        )
+      );
+      const d = response.data;
+      const detectedLang = d.language_code?.split("-")[0] || language;
+      console.log(`[stt-sarvam-fb] latency=${Date.now()-t0}ms lang=${detectedLang} text="${(d.transcript || "").slice(0, 80)}"`);
+      return {
+        text:     d.transcript || "",
+        language: detectedLang,
+      };
+    } catch (err) {
+      console.warn("[stt-sarvam-fb] failed, falling back to microservice:", err.message);
+    }
   }
+
+  return transcribeAudio(audioBuffer, language);  // last resort: local microservice
 }
 
 // Extract a short price snippet from KB context (used to make guided replies KB-aware)
