@@ -85,6 +85,19 @@ const redis = new Redis(config.redisUrl, { lazyConnect: false, maxRetriesPerRequ
 const sessions = new Map();
 const languageManager = new LanguageManager();
 let acceptingTraffic = true;
+
+// ---------------------------------------------------------------------------
+// Live call feed — broadcast transcript events to dashboard WebSocket clients
+// ---------------------------------------------------------------------------
+function broadcastLiveEvent(session, event) {
+  if (!session?.liveSubscribers?.size) return;
+  const payload = JSON.stringify({ ...event, callSid: session.callSid, timestamp: Date.now() });
+  for (const sub of session.liveSubscribers) {
+    if (sub.readyState === WebSocket.OPEN) {
+      try { sub.send(payload); } catch (_) {}
+    }
+  }
+}
 const enablexAuthHeader = config.enablex.appId && config.enablex.appKey
   ? `Basic ${Buffer.from(`${config.enablex.appId}:${config.enablex.appKey}`).toString("base64")}`
   : "";
@@ -2137,6 +2150,14 @@ async function endCall(session, finalStatus = "completed") {
   } catch {}
   await persistCallLog(session, { ...outcome, call_duration_sec: durationSec }, durationSec, finalStatus);
   await persistSession(session);
+  // Notify live feed subscribers that the call has ended, then close their connections
+  broadcastLiveEvent(session, { type: "call_status", status: "ended" });
+  if (session.liveSubscribers) {
+    for (const sub of session.liveSubscribers) {
+      try { if (sub.readyState === WebSocket.OPEN) sub.close(1000, "call ended"); } catch (_) {}
+    }
+    session.liveSubscribers.clear();
+  }
   sessions.delete(session.callSid);
   languageManager.clear(session.callSid);
 }
@@ -2763,6 +2784,8 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       const m = reply.match(/OUTCOME:({.*})/s);
       if (m) { try { session.outcome = JSON.parse(m[1]); } catch {} }
       console.log(`[eleven-stream] done TTFA=${Date.now()-t0}ms reply="${clean.slice(0,60)}" callSid=${callSid}`);
+      // Broadcast to live feed dashboard subscribers
+      if (clean) broadcastLiveEvent(session, { type: "agent_reply", text: clean });
       resolve(clean);
     });
 
@@ -2942,6 +2965,9 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     session.stage = "qualification";
     // Upgrade status so dashboard shows call is active (not stuck at stream_started)
     if (session.status === "stream_started") session.status = "active";
+
+    // Broadcast to live feed dashboard subscribers
+    broadcastLiveEvent(session, { type: "caller_transcript", text: cleanText, language: sttLang });
 
     // ── Goodbye detection — intercept before LLM/streaming, close call immediately ──
     const lcCleanEn = cleanText.toLowerCase().replace(/[।!?.]/g, "").trim();
@@ -3761,6 +3787,25 @@ app.get("/sessions", (_req, res) => {
   res.json({ sessions: list, count: list.length });
 });
 
+// Active calls with live feed WebSocket URL — used by dashboard live feed panel
+app.get("/active-calls", (req, res) => {
+  const wsBase = getPublicWsBaseUrl(req);
+  const list = Array.from(sessions.values())
+    .filter(s => !s.closed)
+    .map(s => ({
+      call_sid: s.callSid,
+      status: s.status || "active",
+      state: s.guidedState || null,
+      phone: s.lead?.phone || null,
+      lead_name: s.lead?.name || null,
+      language: languageManager.getLanguage(s.callSid),
+      started_at: s.startedAt,
+      turn_count: Math.floor((s.history?.length || 0) / 2),
+      live_feed_url: `${wsBase}/live/${s.callSid}`,
+    }));
+  res.json({ calls: list, count: list.length });
+});
+
 app.get("/sessions/:callSid", (req, res) => {
   const session = sessions.get(req.params.callSid);
   if (!session) {
@@ -3929,6 +3974,56 @@ wss.on("connection", (ws, req) => {
   console.log(`[enablex-media] websocket connected url=${req.url || "/"}`);
   const wsUrl = new URL(req.url, "http://localhost");
   const pathParts = wsUrl.pathname.split("/").filter(Boolean);
+
+  // ── Live feed dashboard subscribers: /live/:callSid ─────────────────────
+  if (pathParts[0] === "live") {
+    const feedCallSid = pathParts[1];
+    const feedSession = feedCallSid ? sessions.get(feedCallSid) : null;
+    if (!feedSession) {
+      ws.send(JSON.stringify({ type: "error", message: "call not found" }));
+      ws.close(4004, "call not found");
+      return;
+    }
+    if (!feedSession.liveSubscribers) feedSession.liveSubscribers = new Set();
+    feedSession.liveSubscribers.add(ws);
+    console.log(`[live-feed] subscriber joined callSid=${feedCallSid} total=${feedSession.liveSubscribers.size}`);
+
+    // Send current call state immediately so the UI can show lead info
+    ws.send(JSON.stringify({
+      type: "call_status",
+      callSid: feedCallSid,
+      status: feedSession.status || "active",
+      lead_name: feedSession.lead?.name || null,
+      phone: feedSession.lead?.phone || null,
+      language: languageManager.getLanguage(feedCallSid),
+      started_at: feedSession.startedAt,
+      timestamp: Date.now(),
+    }));
+
+    // Replay transcript history so new subscribers see the full conversation so far
+    const history = feedSession.history || [];
+    for (const item of history) {
+      if (item.role === "user" && item.content !== "[CALL_STARTED]") {
+        try { ws.send(JSON.stringify({ type: "caller_transcript", text: item.content, callSid: feedCallSid, timestamp: Date.now() })); } catch (_) {}
+      } else if (item.role === "assistant") {
+        const clean = item.content.replace(/OUTCOME:({.*})/s, "").trim();
+        if (clean) try { ws.send(JSON.stringify({ type: "agent_reply", text: clean, callSid: feedCallSid, timestamp: Date.now() })); } catch (_) {}
+      }
+    }
+
+    const liveHeartbeat = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.ping();
+    }, 15000);
+
+    ws.on("close", () => {
+      clearInterval(liveHeartbeat);
+      if (feedSession.liveSubscribers) feedSession.liveSubscribers.delete(ws);
+      console.log(`[live-feed] subscriber left callSid=${feedCallSid}`);
+    });
+    return;
+  }
+  // ── End live feed ────────────────────────────────────────────────────────
+
   const requestedCallSid = wsUrl.searchParams.get("callSid") || pathParts[pathParts.length - 1] || crypto.randomUUID();
   let activeCallSid = requestedCallSid;
   let session = sessions.get(requestedCallSid) || null;
@@ -4071,6 +4166,9 @@ wss.on("connection", (ws, req) => {
                   session.pendingGreetingAudio = null;
                   session.openingPlayedAt = nowIso();
                   console.log(`[enablex-media] opening played via fallback-timer callSid=${session.callSid}`);
+                  broadcastLiveEvent(session, { type: "call_status", status: "connected", lead_name: session.lead?.name, phone: session.lead?.phone });
+                  const openingText = (session.history || []).find(h => h.role === "assistant")?.content;
+                  if (openingText) broadcastLiveEvent(session, { type: "agent_reply", text: openingText });
                 }
               }, 1200);
             }
@@ -4117,6 +4215,9 @@ wss.on("connection", (ws, req) => {
             session.pendingGreetingAudio = null;
             session.openingPlayedAt = nowIso();
             console.log(`[enablex-media] opening played via first-media callSid=${session.callSid}`);
+            broadcastLiveEvent(session, { type: "call_status", status: "connected", lead_name: session.lead?.name, phone: session.lead?.phone });
+            const openingText = (session.history || []).find(h => h.role === "assistant")?.content;
+            if (openingText) broadcastLiveEvent(session, { type: "agent_reply", text: openingText });
           }
         }
         audioBuffer = decodeEnablexInboundMedia(event);
