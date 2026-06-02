@@ -373,11 +373,12 @@ function scheduleEnablexStreamStart(session, reason = "scheduled", options = {})
         await persistSession(current);
       } catch (streamError) {
         const errorPayload = streamError.response?.data || streamError.message;
-        console.error("[enablex-media] stream start failed", {
+        // post-dial failures are expected — EnableX fires stream before call is answered
+        console.log("[enablex-media] stream start failed (will retry)", {
           voice_id: voiceId,
           attempt: index + 1,
           reason,
-          error: errorPayload,
+          state: errorPayload?.state || "unknown",
         });
         current.telephony = {
           ...(current.telephony || {}),
@@ -603,6 +604,21 @@ You are a helpful consultant, not a pusher. Your goal is to understand the lead'
 - Build trust; a good experience today leads to a referral tomorrow.`,
   }[pitchTone] || pitchBlock?.balanced;
 
+  // ── Qualification memory — injected so LLM never re-asks what's already known ──
+  const knownFacts = [];
+  if (qualification.purpose) knownFacts.push(`• Purpose: "${qualification.purpose}" ← ALREADY CONFIRMED, do NOT ask again`);
+  if (qualification.budget)  knownFacts.push(`• Budget: "${qualification.budget}" ← ALREADY CONFIRMED, do NOT ask again`);
+  if (qualification.bhk)     knownFacts.push(`• BHK: "${qualification.bhk}" ← ALREADY CONFIRMED, do NOT ask again`);
+  if (qualification.timeline) knownFacts.push(`• Timeline: "${qualification.timeline}" ← ALREADY CONFIRMED, do NOT ask again`);
+  const memoryBlock = knownFacts.length > 0
+    ? `\n━━━ WHAT YOU ALREADY KNOW — DO NOT RE-ASK ━━━\n${knownFacts.join("\n")}\nUse these facts naturally. Reference them. Never re-ask.\n`
+    : "";
+
+  // ── Marathi lock flag — extra enforcement when language is explicitly locked ──
+  const marathiLockBlock = (language === "mr")
+    ? `\n⚠️ LANGUAGE LOCKED TO MARATHI ⚠️\nThe user has requested Marathi. ALL responses MUST be in Marathi ONLY.\nDo NOT switch to Hindi, Hinglish, or English for any reason — not for garbled text, not for Hindi words in their message, not ever.\nIf the user says anything unclear → reply in Marathi: "माफ करा, नीट ऐकू आलं नाही. एकदा परत सांगाल का?"\n`
+    : "";
+
   return `You are ${agentName}, an experienced Indian female real estate consultant calling on behalf of Prop Hunt. Speak like a warm, confident Mumbai/Pune sales executive — natural, human, never robotic. You are NOT a chatbot filling a form. You are a trusted advisor helping the customer.
 
 ${kbBlock}
@@ -611,6 +627,7 @@ LEAD INFO:
 - Name: ${lead.name}
 - Project Interest: ${lead.project || "Unknown"}
 - Budget: ${lead.budget || "not discussed yet"}
+${memoryBlock}${marathiLockBlock}
 
 ${languageInstruction}
 
@@ -2866,8 +2883,10 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     // Language filter — same as Deepgram path: block unsupported languages.
     // ElevenLabs STT may return correct lang code, or may misreport (e.g. Odia text with lang=hin).
     // We filter at the language code level here; the system prompt handles script-level fallback.
-    const SUPPORTED_STT_LANGS = new Set(["hi", "hin", "mr", "en", "pa", "bn", "gu", "kn", "ml", "ta", "te", "hinglish", "auto"]);
-    const sttLang = transcription.language || prevLang || "hi";
+    // "mar" is an alternate ISO code for Marathi returned by ElevenLabs — normalize to "mr".
+    const SUPPORTED_STT_LANGS = new Set(["hi", "hin", "mr", "mar", "en", "pa", "bn", "gu", "kn", "ml", "ta", "te", "hinglish", "auto"]);
+    const rawSttLang = transcription.language || prevLang || "hi";
+    const sttLang = rawSttLang === "mar" ? "mr" : rawSttLang;  // normalize mar → mr
     const safeLang = SUPPORTED_STT_LANGS.has(sttLang) ? sttLang : (prevLang || "hi");
     if (!SUPPORTED_STT_LANGS.has(sttLang)) {
       console.log(`[lang-detect] ignoring unsupported stt_lang="${sttLang}" keeping="${prevLang}" callSid=${callSid}`);
@@ -2929,7 +2948,11 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     const wordCountEn = lcCleanEn.split(/\s+/).filter(w => w.length > 0).length;
     const isGoodbyeEn =
       /^(bye|goodbye|alvida|shukriya|dhanyawaad|dhanyavaad|tata|ok bye|theek hai bye|chalte hain|chal theek|chhodo|nahi chahiye|nahin chahiye|band karo|khatam|no thanks|no thank you|not interested|abhi nahi|nahi abhi)\b/i.test(lcCleanEn) ||
-      (/\b(bye|goodbye|dhanyawaad|shukriya|alvida)\b/i.test(lcCleanEn) && wordCountEn <= 5);
+      (/\b(bye|goodbye|dhanyawaad|shukriya|alvida)\b/i.test(lcCleanEn) && wordCountEn <= 5) ||
+      // Devanagari/Marathi goodbye forms — "गुड बाय", "बाय बाय", "निरोप", "धन्यवाद बाय"
+      /गुड\s*बाय|बाय\s*बाय|ओके\s*बाय|गुडबाय|निरोप|नमस्कार\s*बाय|ठीक\s*आहे\s*बाय|बाय$/.test(cleanText) ||
+      // Pure Marathi farewells
+      /^(ओके|ठीक आहे|बरं|हो)\s*(बाय|निरोप|नमस्कार)/.test(cleanText);
     if (isGoodbyeEn && !isTerminalGuidedState(session)) {
       console.log(`[agent] goodbye detected (enablex path) callSid=${callSid} text="${cleanText}"`);
       const farewellLang = languageManager.getBaseLanguage(callSid) || "hi";
