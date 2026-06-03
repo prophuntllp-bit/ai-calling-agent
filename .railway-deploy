@@ -1,2 +1,3 @@
-# Railway redeploy trigger
-# All services updated to backend/<service>/ root directories
+# Railway redeploy trigger v2
+# Backend services restored to repo root — original Railway paths intact
+# frontend/ subfolder for Vercel
