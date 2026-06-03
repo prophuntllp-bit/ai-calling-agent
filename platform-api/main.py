@@ -92,6 +92,8 @@ def _normalize_voice_language(language: str | None) -> str:
     value = (language or "").strip()
     if not value:
         return "en-IN"
+    if value.lower() == "multilingual":
+        return "multilingual"
     if "-" in value:
         return value
     mapping = {
@@ -114,6 +116,9 @@ def _normalize_voice_language(language: str | None) -> str:
 def _voice_matches_language(voice: dict, target_language: str) -> bool:
     voice_language = _normalize_voice_language(voice.get("language"))
     target = _normalize_voice_language(target_language)
+    # Multilingual voices match any language
+    if voice_language == "multilingual":
+        return True
     if voice_language == target:
         return True
     return voice_language.split("-")[0].lower() == target.split("-")[0].lower()

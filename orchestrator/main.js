@@ -2167,7 +2167,7 @@ function normalizeLanguageToISO(lang = "") {
   const map = {
     "hindi": "hi", "english": "en", "marathi": "mr", "tamil": "ta",
     "telugu": "te", "bengali": "bn", "punjabi": "pa", "gujarati": "gu",
-    "kannada": "kn", "malayalam": "ml", "auto": "auto",
+    "kannada": "kn", "malayalam": "ml", "auto": "auto", "multilingual": "auto",
   };
   const lower = String(lang || "").toLowerCase().split("-")[0];
   return map[lower] || lower || "auto";
@@ -3739,37 +3739,48 @@ app.get("/health", async (_req, res) => {
   }
 });
 
-// ── ElevenLabs voices proxy — dashboard uses this to populate voice dropdown ─
-let _elVoicesCache = null;
-let _elVoicesCachedAt = 0;
-app.get("/voices", async (_req, res) => {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: "ELEVENLABS_API_KEY not set", voices: [] });
-  // 5-minute cache
-  if (_elVoicesCache && Date.now() - _elVoicesCachedAt < 300_000) {
-    return res.json({ voices: _elVoicesCache });
-  }
-  try {
-    const resp = await axios.get("https://api.elevenlabs.io/v1/voices", {
-      headers: { "xi-api-key": apiKey },
-      timeout: 8000,
-    });
-    const voices = (resp.data.voices || []).map(v => ({
-      voice_id: v.voice_id,
-      name:     v.name,
-      gender:   v.labels?.gender || "unknown",
-      language: v.labels?.language || "",
-      accent:   v.labels?.accent  || "",
-      preview_url: v.preview_url || null,
-    }));
-    _elVoicesCache = voices;
-    _elVoicesCachedAt = Date.now();
-    console.log(`[voices] fetched ${voices.length} voices from ElevenLabs`);
-    return res.json({ voices });
-  } catch (err) {
-    console.error("[voices] ElevenLabs API error:", err.response?.status, err.message);
-    return res.status(502).json({ error: "Failed to fetch voices", voices: _elVoicesCache || [] });
-  }
+// ── ElevenLabs voices — returns only the 2 configured voices (male + female) ─
+app.get("/voices", (_req, res) => {
+  const femaleId = process.env.ELEVENLABS_VOICE_FEMALE || process.env.ELEVENLABS_VOICE_ID || "zmh5xhBvMzqR4ZlXgcgL";
+  const maleId   = process.env.ELEVENLABS_VOICE_MALE   || "pNInz6obpgDQGcFmaJgB";
+  const voices = [
+    {
+      voice_id:    femaleId,
+      name:        process.env.ELEVENLABS_VOICE_FEMALE_LABEL || "Female Voice",
+      gender:      "female",
+      language:    "multilingual",
+      accent:      "",
+      preview_url: null,
+    },
+    {
+      voice_id:    maleId,
+      name:        process.env.ELEVENLABS_VOICE_MALE_LABEL || "Male Voice",
+      gender:      "male",
+      language:    "multilingual",
+      accent:      "",
+      preview_url: null,
+    },
+  ];
+  return res.json({ voices });
+});
+
+// ── Supported languages — dashboard uses this to populate language dropdown ──
+app.get("/languages", (_req, res) => {
+  res.json({
+    languages: [
+      { code: "multilingual", label: "Multilingual" },
+      { code: "en",           label: "English" },
+      { code: "hi",           label: "Hindi" },
+      { code: "mr",           label: "Marathi" },
+      { code: "ta",           label: "Tamil" },
+      { code: "te",           label: "Telugu" },
+      { code: "bn",           label: "Bengali" },
+      { code: "kn",           label: "Kannada" },
+      { code: "gu",           label: "Gujarati" },
+      { code: "pa",           label: "Punjabi" },
+      { code: "ml",           label: "Malayalam" },
+    ],
+  });
 });
 
 // Session status — polled by dashboard Test Call panel

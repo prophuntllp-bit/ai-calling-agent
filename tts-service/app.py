@@ -403,14 +403,14 @@ async def list_voices(language: str | None = None):
         eleven_voices = [
             {
                 "voice_id": female_id,
-                "label": os.getenv("ELEVENLABS_VOICE_FEMALE_LABEL", "Monika — Hindi (Female)"),
-                "language": "hi-IN", "gender": "female", "variant": 1,
+                "label": os.getenv("ELEVENLABS_VOICE_FEMALE_LABEL", "Female Voice"),
+                "language": "multilingual", "gender": "female", "variant": 1,
                 "path": f"elevenlabs://{female_id}",
             },
             {
                 "voice_id": male_id,
-                "label": os.getenv("ELEVENLABS_VOICE_MALE_LABEL", "Arjun — Hindi (Male)"),
-                "language": "hi-IN", "gender": "male", "variant": 1,
+                "label": os.getenv("ELEVENLABS_VOICE_MALE_LABEL", "Male Voice"),
+                "language": "multilingual", "gender": "male", "variant": 1,
                 "path": f"elevenlabs://{male_id}",
             },
         ]
