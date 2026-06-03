@@ -1,0 +1,24 @@
+{
+  "name": "ai-voice-orchestrator",
+  "version": "1.0.0",
+  "description": "Real-time AI voice calling orchestrator for Indian real estate",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "dev": "nodemon main.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@livekit/rtc-node": "^0.13.0",
+    "axios": "^1.6.0",
+    "cloudinary": "^2.0.0",
+    "express": "^4.18.0",
+    "form-data": "^4.0.0",
+    "ioredis": "^5.4.1",
+    "prom-client": "^15.1.3",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
+}
