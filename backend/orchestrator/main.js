@@ -3012,7 +3012,9 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
       // Check terminal state first — streaming path bypasses guided-reply, so LLM may have
       // produced a farewell without setting guidedState. Check the reply text itself.
       const streamedLower = (elevenStreamed || "").toLowerCase();
-      const streamedIsFarewell = /\b(namaste|goodbye|good bye|alvida|dhanyawaad|shukriya|thank you for your time|have a (great|lovely|nice|good) day|aapka din shubh)\b/i.test(streamedLower);
+      // NOTE: "namaste" intentionally excluded — it is used as a greeting at the START of
+      // responses and would cause false-positive hangups. True farewells use alvida/dhanyawaad.
+      const streamedIsFarewell = /\b(goodbye|good bye|alvida|dhanyawaad|shukriya|thank you for your time|have a (great|lovely|nice|good) day|aapka din shubh ho)\b/i.test(streamedLower);
       if (streamedIsFarewell && !isTerminalGuidedState(session)) {
         session.guidedState = "closed";
       }
