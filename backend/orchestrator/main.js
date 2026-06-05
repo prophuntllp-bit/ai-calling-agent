@@ -1012,9 +1012,16 @@ async function transcribeAudio(audioBuffer, language = "auto") {
 // Sarvam accepts: POST /speech-to-text  multipart { file, model, language_code }
 // Response: { transcript, language_code, ... }
 const SARVAM_LANG_MAP = {
+  // 2-letter ISO codes
   "hi": "hi-IN", "en": "en-IN", "mr": "mr-IN",
   "ta": "ta-IN", "te": "te-IN", "kn": "kn-IN",
   "gu": "gu-IN", "bn": "bn-IN", "pa": "pa-IN",
+  "ml": "ml-IN", "od": "od-IN",
+  // 3-letter ISO codes returned by ElevenLabs Scribe STT
+  "hin": "hi-IN", "eng": "en-IN", "mar": "mr-IN",
+  "tam": "ta-IN", "tel": "te-IN", "kan": "kn-IN",
+  "guj": "gu-IN", "ben": "bn-IN", "pan": "pa-IN",
+  "mal": "ml-IN",
 };
 
 async function transcribeAudioDirect(audioBuffer, language = "auto") {
@@ -1890,7 +1897,7 @@ async function synthesizeSpeechSarvam(text, voiceId, lang) {
   if (!sarvamKey) return null;
   const langCode = SARVAM_LANG_MAP[lang] || "hi-IN";
   const speaker = voiceId || "meera";
-  const model = process.env.SARVAM_TTS_MODEL || "bulbul:v2";
+  const model = process.env.SARVAM_TTS_MODEL || "bulbul:v3";
   const t0 = Date.now();
   try {
     const response = await timed("tts_sarvam", () =>
@@ -1919,7 +1926,8 @@ async function synthesizeSpeechSarvam(text, voiceId, lang) {
     console.log(`[tts-sarvam] latency=${Date.now()-t0}ms speaker=${speaker} lang=${langCode}`);
     return Buffer.from(audios[0], "base64");
   } catch (err) {
-    console.warn(`[tts-sarvam] failed (${Date.now()-t0}ms): ${err.message}`);
+    const body = err.response?.data ? JSON.stringify(err.response.data).slice(0, 300) : "";
+    console.warn(`[tts-sarvam] failed (${Date.now()-t0}ms): ${err.message}${body ? " body=" + body : ""}`);
     return null;
   }
 }
