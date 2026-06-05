@@ -1953,7 +1953,7 @@ async function synthesizeSpeech(session, text) {
   }
   voiceId = voiceId.toLowerCase();
 
-  const ttsProvider = (process.env.TTS_PROVIDER || "sarvam").toLowerCase();
+  const ttsProvider = (process.env.TTS_PROVIDER || "elevenlabs").toLowerCase();
 
   // ── Sarvam Bulbul TTS (primary when TTS_PROVIDER=sarvam, default) ─────────
   if (ttsProvider === "sarvam" || ttsProvider === "bulbul") {
@@ -2669,7 +2669,7 @@ function createMulawStreamQueue(ws, session, label = "stream") {
 async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio } = {}) {
   const elevenKey = process.env.ELEVENLABS_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
-  const ttsProvider = (process.env.TTS_PROVIDER || "sarvam").toLowerCase();
+  const ttsProvider = (process.env.TTS_PROVIDER || "elevenlabs").toLowerCase();
   if (!elevenKey || !openaiKey || ttsProvider !== "elevenlabs") return null;
 
   const callSid  = session.callSid;
@@ -2696,12 +2696,16 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // style: expressiveness 0-1. Indian real estate calls work best at 0.15-0.30 range —
   //   too high sounds fake/over-the-top on phone calls; too low sounds robotic.
   // similarity_boost: 1.0 keeps voice identity consistent.
+  // Voice settings tuned for natural, non-robotic Hinglish phone calls.
+  // stability: lower = more pitch variation (natural conversation), higher = flat/robotic.
+  // style: expressiveness — too high sounds theatrical on phone; 0.3-0.5 is the sweet spot.
+  // speed: slightly below 1.0 sounds warmer and clearer on phone audio.
   const ESETTINGS = {
-    warm:         { stability: 0.22, similarity_boost: 0.95, style: 0.45, speed: 0.95 },  // friendly, welcoming — more natural warmth
-    excited:      { stability: 0.15, similarity_boost: 0.95, style: 0.60, speed: 1.05 },  // "वाह!", genuine excitement — like Agni
-    empathetic:   { stability: 0.35, similarity_boost: 0.95, style: 0.35, speed: 0.88 },  // budget concerns — soft and understanding
-    professional: { stability: 0.40, similarity_boost: 0.95, style: 0.28, speed: 0.97 },  // site visit confirmations — clear & confident
-    neutral:      { stability: 0.25, similarity_boost: 0.95, style: 0.40, speed: 0.97 },  // default — more expressive than before
+    warm:         { stability: 0.18, similarity_boost: 1.0, style: 0.50, speed: 0.92 },  // friendly, welcoming
+    excited:      { stability: 0.12, similarity_boost: 1.0, style: 0.65, speed: 1.00 },  // genuine excitement
+    empathetic:   { stability: 0.30, similarity_boost: 1.0, style: 0.38, speed: 0.87 },  // budget/concern handling
+    professional: { stability: 0.35, similarity_boost: 1.0, style: 0.32, speed: 0.95 },  // site visit confirmations
+    neutral:      { stability: 0.20, similarity_boost: 1.0, style: 0.45, speed: 0.93 },  // default
   };
   const voiceSettings = ESETTINGS[emotion] || ESETTINGS.neutral;
 
