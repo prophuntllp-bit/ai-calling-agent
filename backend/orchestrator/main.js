@@ -1022,10 +1022,10 @@ async function transcribeAudioDirect(audioBuffer, language = "auto") {
   const sarvamKey = process.env.SARVAM_API_KEY;
 
   // STT_PROVIDER controls which engine runs first.
-  // "sarvam"     → Sarvam Saarika v2.5 first (better for Hindi/Marathi/Hinglish)
-  // "elevenlabs" → ElevenLabs Scribe first (previous default)
-  // Default      → sarvam (when SARVAM_API_KEY is set)
-  const sttProvider = (process.env.STT_PROVIDER || "sarvam").toLowerCase();
+  // "elevenlabs" → ElevenLabs Scribe first (better accuracy, auto language detection)
+  // "sarvam"     → Sarvam Saarika v2.5 first (faster for Hindi/Marathi/Hinglish)
+  // Default      → elevenlabs
+  const sttProvider = (process.env.STT_PROVIDER || "elevenlabs").toLowerCase();
   const useSarvamFirst = sttProvider === "sarvam" && !!sarvamKey;
 
   // ── Sarvam Saarika v2.5 (primary when STT_PROVIDER=sarvam) ───────────────
@@ -1885,6 +1885,45 @@ function normalizeTtsText(text) {
     .replace(/\bN-S\b/gi,  "north south");
 }
 
+async function synthesizeSpeechSarvam(text, voiceId, lang) {
+  const sarvamKey = process.env.SARVAM_API_KEY;
+  if (!sarvamKey) return null;
+  const langCode = SARVAM_LANG_MAP[lang] || "hi-IN";
+  const speaker = voiceId || "meera";
+  const model = process.env.SARVAM_TTS_MODEL || "bulbul:v2";
+  const t0 = Date.now();
+  try {
+    const response = await timed("tts_sarvam", () =>
+      axios.post(
+        `${process.env.SARVAM_API_URL || "https://api.sarvam.ai"}/text-to-speech`,
+        {
+          inputs: [text],
+          target_language_code: langCode,
+          speaker,
+          model,
+          pace: parseFloat(process.env.SARVAM_TTS_PACE || "1.0"),
+          sample_rate: 8000,
+          enable_preprocessing: true,
+        },
+        {
+          headers: {
+            "api-subscription-key": sarvamKey,
+            "Content-Type": "application/json",
+          },
+          timeout: parseInt(process.env.TTS_REQUEST_TIMEOUT_MS || "20000", 10),
+        }
+      )
+    );
+    const audios = response.data?.audios || [];
+    if (!audios.length) return null;
+    console.log(`[tts-sarvam] latency=${Date.now()-t0}ms speaker=${speaker} lang=${langCode}`);
+    return Buffer.from(audios[0], "base64");
+  } catch (err) {
+    console.warn(`[tts-sarvam] failed (${Date.now()-t0}ms): ${err.message}`);
+    return null;
+  }
+}
+
 async function synthesizeSpeech(session, text) {
   const normalizedText = normalizeTtsText(text);
   // gender: from campaign (set by dashboard voice selection) → lead → default female
@@ -1894,21 +1933,28 @@ async function synthesizeSpeech(session, text) {
   const resolvedVoiceId = session.campaign?.voice_id || languageManager.resolveVoice(session.callSid, gender);
 
   const language = languageManager.getLanguage(session.callSid);
-  const lang = languageManager.getBaseLanguage(session.callSid) || "en";
+  const lang = languageManager.getBaseLanguage(session.callSid) || "hi";
 
   let voiceId;
   if (SARVAM_KNOWN_VOICES.has(resolvedVoiceId?.toLowerCase())) {
-    // Dashboard passed an explicit Sarvam voice name — but auto-switch by language
-    // Keep the gender preference; pick the matching voice for the CURRENT detected language
     voiceId = SARVAM_VOICE_MAP[lang]?.[gender] || SARVAM_VOICE_MAP["en"][gender] || "priya";
   } else if (/^([a-z]{2})_(male|female)_\d{2}$/i.test(resolvedVoiceId)) {
-    // Language-manager placeholder (e.g. hi_female_01) → resolve to real Sarvam voice
     voiceId = SARVAM_VOICE_MAP[lang]?.[gender] || SARVAM_VOICE_MAP["en"][gender] || "priya";
   } else {
-    // Explicit custom voice ID passed (e.g. from Agni config) — use as-is
     voiceId = resolvedVoiceId || "priya";
   }
   voiceId = voiceId.toLowerCase();
+
+  const ttsProvider = (process.env.TTS_PROVIDER || "sarvam").toLowerCase();
+
+  // ── Sarvam Bulbul TTS (primary when TTS_PROVIDER=sarvam, default) ─────────
+  if (ttsProvider === "sarvam" || ttsProvider === "bulbul") {
+    const audio = await synthesizeSpeechSarvam(normalizedText, voiceId, lang);
+    if (audio) return audio;
+    console.warn("[tts] Sarvam failed, falling back to microservice");
+  }
+
+  // ── Microservice fallback (handles ElevenLabs or local TTS) ──────────────
   const emotion = emotionFromContext(text, { stage: session.stage });
   try {
     const response = await timed("tts", () =>
@@ -1927,7 +1973,7 @@ async function synthesizeSpeech(session, text) {
     );
     return Buffer.from(response.data);
   } catch (error) {
-    console.warn("[tts] synthesis failed", {
+    console.warn("[tts] microservice synthesis failed", {
       callSid: session.callSid,
       voiceId,
       language,
@@ -2615,7 +2661,7 @@ function createMulawStreamQueue(ws, session, label = "stream") {
 async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio } = {}) {
   const elevenKey = process.env.ELEVENLABS_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
-  const ttsProvider = process.env.TTS_PROVIDER || "elevenlabs";
+  const ttsProvider = (process.env.TTS_PROVIDER || "sarvam").toLowerCase();
   if (!elevenKey || !openaiKey || ttsProvider !== "elevenlabs") return null;
 
   const callSid  = session.callSid;
