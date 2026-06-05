@@ -82,6 +82,7 @@ const serviceLatency = new Histogram({
 });
 
 const redis = new Redis(config.redisUrl, { lazyConnect: false, maxRetriesPerRequest: 2 });
+redis.on("error", (err) => console.error("[redis] connection error:", err.message));
 const sessions = new Map();
 const languageManager = new LanguageManager();
 let acceptingTraffic = true;
@@ -3862,15 +3863,15 @@ app.post("/call/dial", async (req, res) => {
     session.agentConfig = req.body.agent_config;
     console.log(`[dial] agent_config: tone=${session.agentConfig.pitchTone || 'balanced'} wordCap=${session.agentConfig.wordCap || 30} lang=${session.agentConfig.langStrictness || 'pure-hindi'}`);
   }
-  await persistSession(session);
-  const greeting = await getOpeningMessage(session);
-  session.pendingGreetingAudio = await synthesizeSpeech(session, greeting);
-  // Pre-warm TTS cache in background — ready before call connects
-  prewarmTTSCache(session).catch(() => {});
-  const provider = resolveTelephonyProvider(req.body.provider);
+  try {
+    await persistSession(session);
+    const greeting = await getOpeningMessage(session);
+    session.pendingGreetingAudio = await synthesizeSpeech(session, greeting);
+    // Pre-warm TTS cache in background — ready before call connects
+    prewarmTTSCache(session).catch(() => {});
+    const provider = resolveTelephonyProvider(req.body.provider);
 
-  if (provider === "enablex") {
-    try {
+    if (provider === "enablex") {
       const openingLine = (
         req.body.opening_line ||
         req.body.campaign?.opening_line ||
@@ -3878,6 +3879,7 @@ app.post("/call/dial", async (req, res) => {
         greeting ||
         buildEnablexOpeningLine(lead.name || "there")
       ).trim();
+      console.log(`[dial] placing EnableX call to=${lead.phone} from=${config.enablex.fromNumber} hasConfig=${hasEnablexConfig()}`);
       const enablexCall = await placeEnablexOutboundCall({ lead, session, openingLine });
       remapSessionCallSid(session, enablexCall.provider_call_id);
       session.telephony = {
@@ -3900,25 +3902,25 @@ app.post("/call/dial", async (req, res) => {
         kb_attached: !!(session.dynamicVariables?.knowledge_base),
         kb_chars: session.dynamicVariables?.knowledge_base?.length || 0,
       });
-    } catch (error) {
-      return res.status(502).json({
-        error: "Failed to place outbound EnableX call",
-        details: error.response?.data || error.message,
-        call_sid: session.callSid,
-        lead_id: lead.id,
-        greeting,
-      });
     }
-  }
 
-  res.json({
-    call_sid: session.callSid,
-    lead_id: lead.id,
-    phone: lead.phone,
-    status: "queued",
-    greeting,
-    provider: "simulated",
-  });
+    return res.json({
+      call_sid: session.callSid,
+      lead_id: lead.id,
+      phone: lead.phone,
+      status: "queued",
+      greeting,
+      provider: "simulated",
+    });
+  } catch (error) {
+    console.error("[dial] error placing call:", error.message, error.response?.data);
+    return res.status(502).json({
+      error: "Failed to place outbound call",
+      details: error.response?.data || error.message,
+      call_sid: session.callSid,
+      lead_id: lead.id,
+    });
+  }
 });
 
 app.post("/call/bulk-dial", async (req, res) => {
@@ -4272,6 +4274,8 @@ async function gracefulShutdown() {
 
 process.on("SIGTERM", gracefulShutdown);
 process.on("SIGINT", gracefulShutdown);
+process.on("uncaughtException", (err) => console.error("[process] uncaughtException:", err.message, err.stack));
+process.on("unhandledRejection", (reason) => console.error("[process] unhandledRejection:", reason));
 
 server.listen(config.port, () => {
   console.log(`orchestrator listening on ${config.port}`);
