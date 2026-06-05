@@ -1560,7 +1560,7 @@ async function getLLMResponse(session, userText) {
         axios.post(
           "https://api.openai.com/v1/chat/completions",
           {
-            model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+            model: process.env.OPENAI_MODEL || "gpt-4.1",
             messages,
             temperature: 0.3,
             max_tokens: 75,   // ~15 words — forces LLM to be concise, prevents mid-word cut by TTS cap
@@ -1574,7 +1574,7 @@ async function getLLMResponse(session, userText) {
         )
       );
       const reply = await collectStreamingReply(response);
-      console.log(`[openai] callSid=${session.callSid} latency=${Date.now()-t0}ms model=${process.env.OPENAI_MODEL || "gpt-4o-mini"} reply="${reply.slice(0,60)}"`);
+      console.log(`[openai] callSid=${session.callSid} latency=${Date.now()-t0}ms model=${process.env.OPENAI_MODEL || "gpt-4.1"} reply="${reply.slice(0,60)}"`);
       session.history.push({ role: "assistant", content: reply });
       const match = reply.match(/OUTCOME:({.*})/s);
       if (match) { try { session.outcome = JSON.parse(match[1]); } catch {} }
@@ -1594,7 +1594,7 @@ async function getLLMResponse(session, userText) {
         axios.post(
           "https://api.groq.com/openai/v1/chat/completions",
           {
-            model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+            model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
             messages,
             temperature: 0.2,
             max_tokens: 75,   // ~15 words — forces LLM to be concise, prevents mid-word cut by TTS cap
@@ -1638,7 +1638,7 @@ async function getLLMResponse(session, userText) {
       const response = await timed("openai_fallback", () =>
         axios.post(
           "https://api.openai.com/v1/chat/completions",
-          { model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages, temperature: 0.3, max_tokens: 70, stream: true },
+          { model: process.env.OPENAI_MODEL || "gpt-4.1", messages, temperature: 0.3, max_tokens: 70, stream: true },
           { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, responseType: "stream", timeout: 8000 }
         )
       );
@@ -2772,7 +2772,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       try {
         const llmResp = await axios.post(
           "https://api.openai.com/v1/chat/completions",
-          { model: process.env.OPENAI_MODEL || "gpt-4o", messages, temperature: 0.4, max_tokens: 70, stream: true },
+          { model: process.env.OPENAI_MODEL || "gpt-4.1", messages, temperature: 0.4, max_tokens: 70, stream: true },
           { headers: { Authorization: `Bearer ${openaiKey}` }, responseType: "stream", timeout: 8000 }
         );
         let remainder = "";
