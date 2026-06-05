@@ -2588,7 +2588,7 @@ function createMulawStreamQueue(ws, session, label = "stream") {
     close() {
       // Flush any remaining partial ulaw bytes (pad to 160)
       if (leftover.length > 0) {
-        const padded = Buffer.concat([leftover, Buffer.alloc(160 - (leftover.length % 160))]);
+        const padded = Buffer.concat([leftover, Buffer.alloc(160 - (leftover.length % 160), 0xff)]);
         queue.push(padded);
         leftover = Buffer.alloc(0);
         kickSender();
@@ -2692,10 +2692,8 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       // ulaw_8000 = G.711 μ-law at 8kHz — directly compatible with EnableX, no conversion needed.
       // pcm_8000 is NOT supported by ElevenLabs WebSocket streaming (stream-input endpoint)
       // and silently falls back to MP3 → treating MP3 bytes as PCM → crackling/garbage audio.
-      // optimize_streaming_latency=3: balances TTFA vs audio quality.
-      // Level 4 is most aggressive (lowest latency) but causes audio artifacts / robotic
-      // voice on phone calls — especially noticeable mid-sentence on ulaw_8000.
-      `?model_id=${model}&output_format=ulaw_8000&optimize_streaming_latency=3`;
+      // optimize_streaming_latency=2: level 3 causes audio artifacts on ulaw_8000 telephony.
+      `?model_id=${model}&output_format=ulaw_8000&optimize_streaming_latency=2`;
     let elevenWs;
     try { elevenWs = new WebSocket(wsUrl, { headers: { "xi-api-key": elevenKey } }); }
     catch (e) { return reject(e); }
