@@ -422,9 +422,12 @@ function initTestCallForm() {
     const activeAgentConfig = (() => {
       const agents = loadAgents();
       const active = agents.find(a => a.status === 'active') || agents[0];
-      if (!active) return {};
+      const sess   = getCurrentSession();
+      const orgName = sess?.tenantName || localStorage.getItem('prophunt_tenant_name') || 'Prophunt';
+      if (!active) return { companyName: orgName };
       return {
         agentName:      active.name?.split('—')[0]?.trim() || 'Priya',
+        companyName:    orgName,
         pitchTone:      active.pitchTone      || 'balanced',
         langStrictness: active.langStrictness || 'pure-hindi',
         wordCap:        active.wordCap        || 30,

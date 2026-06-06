@@ -167,8 +167,9 @@ function hasEnablexConfig() {
   return Boolean(enablexAuthHeader && config.enablex.fromNumber);
 }
 
-function buildEnablexOpeningLine(leadName = "there") {
-  return `Hello, this is Priya from Prophunt. I am calling regarding your interest in our project. Is this a good time to talk for thirty seconds, ${leadName}?`;
+function buildEnablexOpeningLine(leadName = "there", agentName = "Priya", companyName = "Prophunt", projectName = "") {
+  const proj = projectName ? `${projectName} mein` : "hamare project mein";
+  return `Namaste ${leadName} ji! Main ${agentName} bol rahi hoon ${companyName} se. Aapne ${proj} interest dikhaya tha — kya abhi do minute hain?`;
 }
 
 function normalizeEnablexPhoneNumber(phone) {
@@ -545,6 +546,7 @@ function buildSystemPrompt(lead, knowledgeContext, language, agentConfig = {}, q
 
   // ── Agent config with defaults ────────────────────────────────────────────
   const agentName      = agentConfig.agentName      || "Priya";
+  const companyName    = agentConfig.companyName     || "Prophunt";
   const wordCap        = parseInt(agentConfig.wordCap || "30", 10);
   const pitchTone      = agentConfig.pitchTone      || "balanced";       // aggressive | balanced | consultative
   const langStrictness = agentConfig.langStrictness  || "auto";          // auto | hinglish | pure-hindi
@@ -641,11 +643,11 @@ Think of yourself as that friend who happens to know everything about Pune prope
 The user asked to speak in Marathi. Every word you say MUST be in Marathi written in Devanagari script.
 
 SCRIPT RULE — NON-NEGOTIABLE:
-✓ CORRECT: "नमस्कार, मी प्रिया बोलतेय Prop Hunt मधून. कसे आहात?"
-✗ WRONG: "Namaskar, mi Priya boltey Prop Hunt madhun. Kase aahat?"
+✓ CORRECT: "नमस्कार, मी ${agentName} बोलतेय ${companyName} मधून. कसे आहात?"
+✗ WRONG: "Namaskar, mi ${agentName} boltey ${companyName} madhun. Kase aahat?"
 ✗ WRONG: "हाँ बिल्कुल" (Hindi) — use Marathi: "हो, नक्कीच"
 
-English proper nouns (Prop Hunt, Mahindra Citadel, RERA, WhatsApp) may stay in English.
+English proper nouns (${companyName}, Mahindra Citadel, RERA, WhatsApp) may stay in English.
 Numbers should be in digits — say them in Marathi words (e.g. "पन्नास लाख" or "50 लाख").
 ALL other words must be pure Devanagari Marathi.
 
@@ -666,7 +668,7 @@ Use Marathi: "नक्कीच", "हो", "ठीक आहे", "नाह�
 `
     : "";
 
-  return `You are ${agentName}, a real estate consultant calling from Prop Hunt. You've been doing this for years and you genuinely enjoy it — helping people find the right home or investment is something you take seriously.
+  return `You are ${agentName}, a real estate consultant calling from ${companyName}. You've been doing this for years and you genuinely enjoy it — helping people find the right home or investment is something you take seriously.
 
 Think of yourself as that one friend who happens to know everything about the Pune/Mumbai property market. Not a salesperson. Not a bot. A real person who picks up the phone, listens carefully, and talks like a human being.
 
@@ -1703,24 +1705,21 @@ async function getOpeningMessage(session) {
         return capReplyWords(threeSentences, 30);
       })()
     : (() => {
-        // No opening line configured — build a natural, context-aware greeting
-        // using actual agent name, project, and language from session.
-        const agentName   = session.agentConfig?.agentName || "Priya";
-        const company     = "Prop Hunt";
-        const proj        = projectName !== "hamare project" ? projectName : "";
-        const projHint    = proj ? `${proj} ke baare mein ` : "";
-        const projHintMr  = proj ? `${proj} बद्दल ` : "";
-        const lang        = session._lockedLanguage
+        // No opening line configured — Maya/Agni-style: name + company + project interest + permission ask
+        const agentName  = session.agentConfig?.agentName  || "Priya";
+        const company    = session.agentConfig?.companyName || "Prophunt";
+        const proj       = projectName !== "hamare project" ? projectName : "";
+        const lang       = session._lockedLanguage
           || normalizeLanguageToISO(session.lead?.language || "auto");
 
         const smartGreeting =
           lang === "mr"
-            ? `नमस्कार ${leadName}जी! मी ${agentName} बोलतेय, ${company} मधून. ${projHintMr}बोलायचे होते — आत्ता थोडा वेळ आहे का?`
+            ? `नमस्कार ${leadName}जी! मी ${agentName} बोलतेय, ${company} मधून. आपण ${proj || "आमच्या project"} मध्ये interest दाखवला होता — आत्ता दोन मिनिट बोलता येईल का?`
           : lang === "en"
-            ? `Hello ${leadName}! This is ${agentName} calling from ${company}. I wanted to chat about ${proj || "a property"} — is now a good time?`
-            : `Namaste ${leadName} ji! Main ${agentName} bol rahi hoon ${company} se. ${projHint}baat karni thi — kya abhi thoda waqt hai?`;
+            ? `Hello ${leadName}! This is ${agentName} calling from ${company}. You had shown interest in ${proj || "one of our properties"} — do you have a couple of minutes?`
+            : `Namaste ${leadName} ji! Main ${agentName} bol rahi hoon ${company} se. Aapne ${proj ? proj + " mein" : "hamare project mein"} interest dikhaya tha — kya abhi do minute hain?`;
 
-        return capReplyWords(smartGreeting, 30);
+        return capReplyWords(smartGreeting, 35);
       })();
 
   // Seed history so subsequent LLM turns have context of how the call started
@@ -4008,7 +4007,12 @@ app.post("/call/dial", async (req, res) => {
         req.body.campaign?.opening_line ||
         req.body.campaign?.openingLine ||
         greeting ||
-        buildEnablexOpeningLine(lead.name || "there")
+        buildEnablexOpeningLine(
+          lead.name || "there",
+          session.agentConfig?.agentName  || "Priya",
+          session.agentConfig?.companyName || "Prophunt",
+          lead.project || ""
+        )
       ).trim();
       console.log(`[dial] placing EnableX call to=${lead.phone} from=${config.enablex.fromNumber} hasConfig=${hasEnablexConfig()}`);
       const enablexCall = await placeEnablexOutboundCall({ lead, session, openingLine });
