@@ -731,6 +731,10 @@ LOCATION / AMENITY QUESTIONS (nearest metro, hospital, school, distance, connect
 ✗ Make up prices, RERA numbers, or possession dates you don't have in KB
 ✗ Give a 5-sentence answer when 2 sentences will do
 
+━━━ MID-CALL CHECK-INS ━━━
+If the user says ONLY "hello", "hi", "हेलो", "हाँ", "haan", "are you there" at any point during the conversation — DO NOT re-introduce yourself. Just say "हाँ, बोलिए" or "हाँ, हूँ यहाँ" and wait. NEVER restart the call or repeat your name.
+This call is ALREADY in progress — treat it as ongoing no matter what.
+
 ━━━ CLOSING ━━━
 Natural end: "Bahut achha laga baat karke ${lead.name} ji! Details bhejti hoon WhatsApp pe. Apna khayaal rakhna. Namaste!"
 Not interested: "Koi baat nahi, bilkul. Kabhi bhi sawaal ho — main hoon. Take care!"
@@ -3039,15 +3043,30 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     // Pipes LLM tokens directly to ElevenLabs WS — audio starts before LLM finishes.
     // This is the same fast path used by the Deepgram pipeline.
     // Fallback to REST-per-sentence if ElevenLabs streaming is unavailable.
-    const elevenStreamed = await streamingLLMWithElevenLabs(ws, session, cleanText, {
-      onFirstAudio: () => {
-        // Release processing lock when first audio fires — allows barge-in during playback
-        if (session.inboundAudio) {
-          session.inboundAudio.processing  = false;
-          session.inboundAudio.lastFlushAt = Date.now();
+    const onFirstAudioCb = () => {
+      if (session.inboundAudio) {
+        session.inboundAudio.processing  = false;
+        session.inboundAudio.lastFlushAt = Date.now();
+      }
+    };
+    let elevenStreamed = await streamingLLMWithElevenLabs(ws, session, cleanText, { onFirstAudio: onFirstAudioCb })
+      .catch(async (err) => {
+        // On LLM timeout: play a brief filler and retry once before falling through to fallback
+        if (err.message && err.message.includes("timeout") && !session.closed && ws.readyState === WebSocket.OPEN) {
+          console.warn(`[eleven-stream] LLM timeout — playing filler and retrying callSid=${callSid}`);
+          const fillerLang = languageManager.getBaseLanguage(callSid) || "hi";
+          const fillerText = (fillerLang === "mr") ? "एक क्षण थांबा..." : "Ek second...";
+          const fillerAudio = await synthesizeSpeech(session, fillerText).catch(() => null);
+          if (fillerAudio && ws.readyState === WebSocket.OPEN) {
+            clearEnablexMedia(ws, session);
+            sendEnablexMedia(ws, session, fillerAudio, "llm-timeout-filler");
+            await new Promise(r => setTimeout(r, 800));
+          }
+          return streamingLLMWithElevenLabs(ws, session, cleanText, { onFirstAudio: onFirstAudioCb })
+            .catch(() => null);
         }
-      },
-    });
+        return null;
+      });
     if (elevenStreamed !== null) {
       console.log(`[agent] streaming callSid=${callSid} total=${Date.now()-t0}ms reply="${(elevenStreamed||"").slice(0,60)}"`);
       // Check terminal state first — streaming path bypasses guided-reply, so LLM may have
@@ -3634,8 +3653,10 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
 
 // ── SPECULATIVE_STT_FRAMES: fire STT after this many speech frames ─────────────
 // Used in the LOCAL fallback pipeline (when Deepgram is not available).
-// 8 frames × 20ms = 160ms of speech → STT starts while we still collect audio.
-const SPECULATIVE_STT_FRAMES = 8;
+// 14 frames × 20ms = 280ms of speech → fires speculative STT while still collecting.
+// Was 8 (160ms) but fired too early, cutting users mid-sentence. 14 is a better balance
+// between latency savings and waiting for a complete thought fragment.
+const SPECULATIVE_STT_FRAMES = 14;
 
 // ── handleCallerAudioFrame — accepts optional rawMulaw for Deepgram forwarding ─
 // rawMulaw: the raw μ-law bytes from EnableX before PCM decoding (extracted by
