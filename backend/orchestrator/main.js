@@ -1807,6 +1807,35 @@ function inferGenderFromVoiceName(name = "") {
   return male.includes(name.toLowerCase()) ? "male" : "female";
 }
 
+// Convert an Indian-comma-formatted or plain integer string to spoken words.
+// Returns null if the number is outside the lakh/crore range or not clean.
+function toIndianWords(numStr) {
+  const n = parseInt(String(numStr).replace(/,/g, ""), 10);
+  if (isNaN(n) || n < 0) return null;
+  if (n >= 1e9) return null; // above 100 crore — leave alone
+  if (n >= 1e7) {
+    const crInt = Math.floor(n / 1e7);
+    const rem   = n - crInt * 1e7;
+    const lakhs = Math.round(rem / 1e5);
+    if (lakhs === 0) return `${crInt} crore`;
+    if (crInt  === 0) return `${lakhs} lakh`;
+    return `${crInt} crore ${lakhs} lakh`;
+  }
+  if (n >= 1e5) {
+    const lkInt = Math.floor(n / 1e5);
+    const rem   = n - lkInt * 1e5;
+    const th    = Math.round(rem / 1000);
+    if (th    === 0) return `${lkInt} lakh`;
+    if (lkInt === 0) return `${th} hazaar`;
+    return `${lkInt} lakh ${th} hazaar`;
+  }
+  if (n >= 1000) {
+    const th = n / 1000;
+    if (Number.isInteger(th)) return `${th} hazaar`;
+  }
+  return null;
+}
+
 // Normalise text before TTS: expand abbreviations and fix known mispronunciations
 function normalizeTtsText(text) {
   return (text || "")
@@ -1834,6 +1863,12 @@ function normalizeTtsText(text) {
     .replace(/\b(\d+(?:\.\d+)?)\s*[Cc]r\.?\b/g,           "$1 crore")
     .replace(/\b(\d+(?:\.\d+)?)\s*[Ll](?:ac|akh)?\.?\b/g, "$1 lakh")
 
+    // ── Indian comma-format numbers → spoken Indian words ─────────────────
+    // Matches 1,00,000 / 50,00,000 / 1,00,00,000 / 1,50,000 etc.
+    // Pattern: 1–2 digits, then groups of 2 digits, final group of 3 digits.
+    // Excludes plain western thousands like 1,234 (toIndianWords returns null → kept as-is).
+    .replace(/\b(\d{1,2}(?:,\d{2})*,\d{3})\b/g, m => toIndianWords(m) || m)
+
     // ── Number ranges: "54–70" / "54-70" / "54 to 70" → "54 se 70" ────────
     // ElevenLabs reads en-dash as "minus" — replace with natural Hindi "se"
     .replace(/(\d+(?:\.\d+)?)\s*[–—-]\s*(\d+(?:\.\d+)?)\s*(lakh|crore|lac|लाख|करोड़|L\b|Cr\b)/gi,
@@ -1851,6 +1886,12 @@ function normalizeTtsText(text) {
     .replace(/\bBHK\b/gi,        "बी एच के")                  // standalone "BHK"
     .replace(/\b(\d)\s*RK\b/gi,  (_, n) => `${n} आर के`)     // "1RK" → "1 आर के"
     .replace(/\bRK\b/gi,         "आर के")
+
+    // ── Ordinals → Hindi spoken forms ────────────────────────────────────
+    .replace(/\b1st\b/gi, "pehla")
+    .replace(/\b2nd\b/gi, "doosra")
+    .replace(/\b3rd\b/gi, "teesra")
+    .replace(/\b(\d+)th\b/gi, "$1")
 
     // ── Common Indian RE abbreviations → Hindi phonetic ──────────────────
     .replace(/\bRERA\b/g,  "रेरा")
@@ -2953,9 +2994,15 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     languageManager.recordUtterance(callSid, langToRecord, transcription.text);
 
     // Detect explicit language switch requests — lock the new language
-    // "मराटी" is a common spoken-form alternate spelling of "मराठी" (without ठ)
+    // IMPORTANT: Only trigger on clear REQUEST to switch, not on questions about the language.
+    // "क्या आप मराठी लिखते हैं?" is a QUESTION, not a switch request — must NOT lock.
+    // Valid switch requests: "marathi mein bolo", "marathi madhye bola", "marathi bol", standalone "marathi"
     const lcText = transcription.text.toLowerCase();
-    if (/marathi|मराठी|मराटी/.test(lcText)) {
+    const marathiSwitchRequest =
+      /marathi\s*(mein|me|madhye|bol(?:o|iye?)?|baat|switch|chalte|karo|karte)\b/i.test(lcText) ||
+      /मराठी\s*(मध्ये|में|बोल(?:िए|ो)?|मे\s*बोलो|चालते|करो|करते)/i.test(lcText) ||
+      /^(marathi|मराठी|मराटी)\s*[.!]?\s*$/.test(transcription.text.trim()); // standalone word only
+    if (marathiSwitchRequest) {
       session._lockedLanguage = "mr";
       console.log(`[lang-lock] locked to Marathi (explicit) callSid=${callSid}`);
     } else if (/hindi|हिंदी|हिन्दी/.test(lcText)) {
