@@ -1030,9 +1030,9 @@ async function transcribeAudioDirect(audioBuffer, language = "auto") {
 
   // STT_PROVIDER controls which engine runs first.
   // "elevenlabs" → ElevenLabs Scribe first (better accuracy, auto language detection)
-  // "sarvam"     → Sarvam Saarika v2.5 first (faster for Hindi/Marathi/Hinglish)
-  // Default      → elevenlabs
-  const sttProvider = (process.env.STT_PROVIDER || "elevenlabs").toLowerCase();
+  // "elevenlabs" → ElevenLabs Scribe first (auto lang detection)
+  // Default      → sarvam
+  const sttProvider = (process.env.STT_PROVIDER || "sarvam").toLowerCase();
   const useSarvamFirst = sttProvider === "sarvam" && !!sarvamKey;
 
   // ── Sarvam Saarika v2.5 (primary when STT_PROVIDER=sarvam) ───────────────
