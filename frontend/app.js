@@ -394,14 +394,8 @@ function initTestCallForm() {
     const voice    = settings.voice || 'Priya';
     const voiceMeta = getVoiceMeta(voice);
 
-    // Opening line is required — block the call if it's empty
-    if (!custom) {
-      showToast('Please enter an opening line before starting the call.', 'error');
-      document.getElementById('call-opening')?.focus();
-      return;
-    }
-    // Interpolate {lead name}, {project name} placeholders with actual values
-    const openingLine = interpolateOpeningLine(custom, name, project);
+    // Opening line is optional — if blank, backend generates a natural greeting
+    const openingLine = custom ? interpolateOpeningLine(custom, name, project) : undefined;
     const kbContext   = getKBContext(kbId);
 
     const statusPanel   = document.getElementById('test-call-status');
@@ -418,7 +412,7 @@ function initTestCallForm() {
     statusLabel.textContent = 'Initiating call...';
     statusSid.textContent = '—';
     statusState.textContent = '—';
-    statusGreeting.textContent = openingLine;
+    statusGreeting.textContent = openingLine || '(AI-generated greeting)';
     if (statusLog) statusLog.textContent = '';
 
     appendLog(`Calling ${phone} (${language}, voice: ${voice} ${voiceMeta.gender})...`);
@@ -442,9 +436,9 @@ function initTestCallForm() {
       lead:     { name, phone, language, project },
       // voice_gender goes into campaign so backend uses it when resolving language-switched voices
       // voice_id is intentionally NOT set here → lets language auto-detection pick correct voice per language
-      campaign: { name: project, openingLine, voice_gender: voiceMeta.gender },
+      campaign: { name: project, openingLine: openingLine || undefined, voice_gender: voiceMeta.gender },
       provider: 'enablex',
-      opening_line: openingLine,
+      opening_line: openingLine || undefined,
       // KB context injected as dynamic variable for LLM system prompt
       dynamic_variables: kbContext ? { knowledge_base: kbContext, lead_name: name, project_name: project } : { lead_name: name, project_name: project },
       kb_id: kbId || undefined,
@@ -2105,33 +2099,15 @@ function initVoiceAgentPage() {
   // Populate ElevenLabs voices (replaces hardcoded Sarvam list)
   populateVoiceSelect('agent-voice', s.voice || '');
 
-  // Always pre-fill opening line — from saved settings (if valid), or a language-appropriate default
+  // Opening line is optional — only restore if user previously saved one
   const co = document.getElementById('call-opening');
   if (co) {
-    const lang = s.language || 'Hindi';
-    const defaultTemplates = {
-      Hindi:   'Namaste {lead name} ji, main Priya bol rahi hoon Prop Hunt se. Aap {project name} mein interested hain, kya abhi baat kar sakte hain?',
-      Marathi: 'Namaskar {lead name}, mi Prop Hunt madhun Priya boltey. {project name} baddal bolayche hote, ata vel ahe ka?',
-      English: "Hello {lead name}, I'm Priya calling from Prop Hunt regarding your interest in {project name}. Is now a good time to talk?",
-      Tamil:   'Vanakkam {lead name}, naan Prop Hunt-il irundhu Priya pesugiren. {project name} pattri pesalama?',
-      Telugu:  'Namaskaram {lead name}, nenu Prop Hunt nundi Priya matladutunna. {project name} gurinchi matladochaa?',
-    };
-    const fallback = defaultTemplates[lang] || defaultTemplates['Hindi'];
-    // Validate saved opening line — reject emails, phone numbers, URLs, or anything too short
     const saved = s.openingLine || '';
     const isValidOpening = saved.length >= 20
-      && !/^[\w.+%-]+@[\w.-]+\.\w+$/.test(saved.trim())   // not an email
-      && !/^https?:\/\//.test(saved.trim())                // not a URL
-      && !/^\+?\d[\d\s().-]{7,}$/.test(saved.trim());     // not a phone number
-    co.value = isValidOpening ? saved : fallback;
-    // Also clear the bad value from settings so it doesn't persist
-    if (!isValidOpening && saved) {
-      const cleaned = loadSettings();
-      cleaned.openingLine = fallback;
-      localStorage.setItem('prophunt_settings', JSON.stringify(cleaned));
-      const ao = document.getElementById('agent-opening');
-      if (ao) ao.value = fallback;
-    }
+      && !/^[\w.+%-]+@[\w.-]+\.\w+$/.test(saved.trim())
+      && !/^https?:\/\//.test(saved.trim())
+      && !/^\+?\d[\d\s().-]{7,}$/.test(saved.trim());
+    co.value = isValidOpening ? saved : '';
     updateOpeningPreview();
   }
 

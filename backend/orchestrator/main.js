@@ -1698,17 +1698,29 @@ async function getOpeningMessage(session) {
   const opening = rawOpening
     ? (() => {
         // Allow up to 3 sentences, cap at 30 words.
-        // ElevenLabs Hindi TTS: ~3.5 words/sec → 30 words ≈ 8.5s audio — acceptable for opening.
-        // 20-word cap was cutting configured opening lines mid-sentence when templates
-        // had more than one sentence of introduction (e.g. name + company + project intro).
         const sentences = rawOpening.split(/(?<=[.!?।])\s+/);
         const threeSentences = sentences.slice(0, 3).join(" ").trim();
         return capReplyWords(threeSentences, 30);
       })()
     : (() => {
-        // Short hardcoded fallback — only used if opening line field is completely empty
-        const fallback = `Namaste ${leadName} ji! Main Priya hoon Prop Hunt se. Aapko ek project ke baare mein batana tha.`;
-        return capReplyWords(fallback, 30);
+        // No opening line configured — build a natural, context-aware greeting
+        // using actual agent name, project, and language from session.
+        const agentName   = session.agentConfig?.agentName || "Priya";
+        const company     = "Prop Hunt";
+        const proj        = projectName !== "hamare project" ? projectName : "";
+        const projHint    = proj ? `${proj} ke baare mein ` : "";
+        const projHintMr  = proj ? `${proj} बद्दल ` : "";
+        const lang        = session._lockedLanguage
+          || normalizeLanguageToISO(session.lead?.language || "auto");
+
+        const smartGreeting =
+          lang === "mr"
+            ? `नमस्कार ${leadName}जी! मी ${agentName} बोलतेय, ${company} मधून. ${projHintMr}बोलायचे होते — आत्ता थोडा वेळ आहे का?`
+          : lang === "en"
+            ? `Hello ${leadName}! This is ${agentName} calling from ${company}. I wanted to chat about ${proj || "a property"} — is now a good time?`
+            : `Namaste ${leadName} ji! Main ${agentName} bol rahi hoon ${company} se. ${projHint}baat karni thi — kya abhi thoda waqt hai?`;
+
+        return capReplyWords(smartGreeting, 30);
       })();
 
   // Seed history so subsequent LLM turns have context of how the call started
