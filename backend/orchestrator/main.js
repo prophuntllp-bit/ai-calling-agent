@@ -633,9 +633,37 @@ Think of yourself as that friend who happens to know everything about Pune prope
     ? `\n━━━ WHAT YOU ALREADY KNOW — DO NOT RE-ASK ━━━\n${knownFacts.join("\n")}\nUse these facts naturally. Reference them. Never re-ask.\n`
     : "";
 
-  // ── Marathi lock flag — extra enforcement when language is explicitly locked ──
+  // ── Marathi mode — full override when language is explicitly locked to Marathi ──
   const marathiLockBlock = (language === "mr")
-    ? `\n⚠️ LANGUAGE LOCKED TO MARATHI ⚠️\nThe user has requested Marathi. ALL responses MUST be in Marathi ONLY.\nDo NOT switch to Hindi, Hinglish, or English for any reason — not for garbled text, not for Hindi words in their message, not ever.\nIf the user says anything unclear → reply in Marathi: "माफ करा, नीट ऐकू आलं नाही. एकदा परत सांगाल का?"\n`
+    ? `
+⚠️ LANGUAGE LOCKED TO MARATHI — DEVANAGARI SCRIPT ONLY ⚠️
+
+The user asked to speak in Marathi. Every word you say MUST be in Marathi written in Devanagari script.
+
+SCRIPT RULE — NON-NEGOTIABLE:
+✓ CORRECT: "नमस्कार, मी प्रिया बोलतेय Prop Hunt मधून. कसे आहात?"
+✗ WRONG: "Namaskar, mi Priya boltey Prop Hunt madhun. Kase aahat?"
+✗ WRONG: "हाँ बिल्कुल" (Hindi) — use Marathi: "हो, नक्कीच"
+
+English proper nouns (Prop Hunt, Mahindra Citadel, RERA, WhatsApp) may stay in English.
+Numbers should be in digits — say them in Marathi words (e.g. "पन्नास लाख" or "50 लाख").
+ALL other words must be pure Devanagari Marathi.
+
+MARATHI EXAMPLE PHRASES — USE THESE AS YOUR STYLE GUIDE:
+• Check-in: "हो, बोला — मी ऐकतेय."
+• Agreement: "हो, नक्की." / "बरोबर आहे." / "अगदी बरोबर."
+• Warm opener: "अरे वा, गुंतवणुकीसाठी बघतोय? अगदी योग्य वेळ आहे."
+• After info shared: "एकदा site ला या — 20-30 मिनिटांत सगळं clear होतं. कधी वेळ आहे?"
+• Budget pushback: "EMI मध्ये मोडलं तर इतकं मोठं वाटत नाही. Exact amount सांगू का?"
+• Soft close: "Details WhatsApp वर पाठवते — WhatsApp number द्याल का?"
+• Goodbye: "बोलून खूप बरं वाटलं! काळजी घ्या. नमस्कार!"
+• Unclear audio: "माफ करा, नीट ऐकू आलं नाही. एकदा परत सांगाल का?"
+• Self-correct: "हो हो, बरोबर पकडलंत — चुकलो मी."
+• Unknown info: "नक्की माहीत नाही — confirm करून सांगतो/सांगते."
+
+NEVER output Hindi words like "बिल्कुल", "हाँ", "ठीक है", "नहीं", "अच्छा".
+Use Marathi: "नक्कीच", "हो", "ठीक आहे", "नाही", "बरं".
+`
     : "";
 
   return `You are ${agentName}, a real estate consultant calling from Prop Hunt. You've been doing this for years and you genuinely enjoy it — helping people find the right home or investment is something you take seriously.
@@ -1857,6 +1885,7 @@ function normalizeTtsText(text) {
     .replace(/sq\.?\s*f(?:eet|oot)\.?/gi,    "square feet")
     .replace(/sq\.?\s*m(?:t|tr|eter)?\.?/gi, "square meter")
     .replace(/\bsqmt\b/gi,                   "square meter")
+    .replace(/\bsq\b/gi,                     "square")
 
     // ── Large Indian number suffixes ─────────────────────────────────────
     // e.g. "1.5Cr" → "1.5 crore",  "80L" / "80 lac" → "80 lakh"
@@ -1886,12 +1915,6 @@ function normalizeTtsText(text) {
     .replace(/\bBHK\b/gi,        "बी एच के")                  // standalone "BHK"
     .replace(/\b(\d)\s*RK\b/gi,  (_, n) => `${n} आर के`)     // "1RK" → "1 आर के"
     .replace(/\bRK\b/gi,         "आर के")
-
-    // ── Ordinals → Hindi spoken forms ────────────────────────────────────
-    .replace(/\b1st\b/gi, "pehla")
-    .replace(/\b2nd\b/gi, "doosra")
-    .replace(/\b3rd\b/gi, "teesra")
-    .replace(/\b(\d+)th\b/gi, "$1")
 
     // ── Common Indian RE abbreviations → Hindi phonetic ──────────────────
     .replace(/\bRERA\b/g,  "रेरा")
