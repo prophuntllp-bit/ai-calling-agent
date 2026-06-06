@@ -2105,22 +2105,8 @@ async function finalizeRecording(session) {
   // Railway's filesystem is ephemeral — local file URLs break after every deploy.
   // Redis TTL: 30 days (same as call log retention).
   if (mixedPcm.length) {
-    try {
-      const wavBuffer = fs.readFileSync(files.mixed);
-      const b64 = wavBuffer.toString("base64");
-      // Only cache recordings under 10 MB to avoid Redis OOM
-      if (b64.length < 10 * 1024 * 1024) {
-        await redis.set(
-          `recording:${session.callSid}`,
-          b64,
-          "EX",
-          30 * 24 * 60 * 60  // 30 days
-        );
-        console.log(`[recording] cached to Redis callSid=${session.callSid} size=${Math.round(b64.length / 1024)}KB`);
-      }
-    } catch (err) {
-      console.warn("[recording] Redis cache failed:", err.message);
-    }
+    // Recordings are served from Cloudinary / local disk — no Redis caching needed.
+    // Storing audio in Redis was filling the 256MB free-tier limit in <50 calls.
   }
 
   session.recordingPath = mixedPcm.length ? recordingUrl(session.callSid, "mixed.wav") : null;
