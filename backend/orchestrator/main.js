@@ -587,36 +587,765 @@ Once a language is established, MAINTAIN it for the entire conversation.
 Keep responses SHORT — max ${wordCap} words — one clear point per reply.`;
 
 
-  // ── Sales pitch philosophy based on tone ─────────────────────────────────
+  // ── Sales approach by tone — written like coaching notes for a human salesperson ──
   const pitchBlock = {
-    aggressive: `SALES PHILOSOPHY — AGGRESSIVE CLOSER:
-You are a confident, results-driven closer. Every conversation must move toward a site visit.
-- After giving any project info: immediately bridge to site visit — "Main abhi 30-minute visit arrange kar sakti hoon, kya aaj ya kal theek rahega?"
-- After FIRST soft refusal ("sochna hai", "baad mein"): persist once — "${agentName}: Main bilkul samajhti hoon. Lekin bina dekhe decision lena mushkil hota hai — ek 20-minute visit mein sab clear ho jayega. Kaisa rahega?"
-- After SECOND refusal: close gracefully and end the call.
-OBJECTION SCRIPTS:
-• "Budget tight hai" → "EMI option bhi available hai — mujhe exact EMI figure pata hai, kya bata doon?"
-• "Sochna hai" → "Zaroor sochiye — lekin slots limited hain. Ek tentative visit book kar lein, cancel karna free hai."
-• "Abhi time nahi" → "20 minute — bas itna hi chahiye. Weekend mein bhi visit ho sakti hai."`,
+    aggressive: `YOUR STYLE — WARM BUT DRIVEN:
+You genuinely want to help them, but you also know a good deal when you see one — and you want them to not miss it.
+- Always answer their question first, THEN naturally move toward next step.
+- After sharing project info, casually invite: "Ek baar aake dekh lo — 20-30 minute mein picture clear ho jaati hai. Kab free ho?"
+- If they say "sochna hai": "Haan bilkul, sochna chahiye itne bade decision mein. Bas ek site visit karo na — bina dekhe sochna thoda mushkil hota hai. Weekend chalega?"
+- Second soft refusal: let it go warmly. "Koi baat nahi. Main WhatsApp pe details bhej deti hoon — jab mann kare dekh lena."
+- Budget objection: "Dekhiye, EMI mein tod dein toh figure itna bada nahi lagta. Exact number bata doon?"
+- Never pressure. Urgency should feel real, not manufactured.`,
 
-    balanced: `SALES PITCH FLOW — 5-step natural progression (Agni-style):
-STEP 1 — ANSWER & DISCOVER: Answer the lead's question fully using KB. Ask one focused discovery question.
-STEP 2 — QUALIFY (one at a time): purpose → area → budget → BHK → timeline.
-STEP 3 — CONTACT COLLECTION: After budget is known, naturally collect contact — "Aapke budget ke hisaab se kuch options shortlist karwa deti hoon. Kya aap apna WhatsApp number share kar sakte hain?"
-STEP 4 — BUILD VALUE + INVITE: Share KB-backed specifics — price, USP, possession. Then offer choice: "Main details WhatsApp par bhej sakti hoon, ya aap ek baar site personally dekh sakte hain — dono mein se jo comfortable ho."
-STEP 5 — CLOSE: "Bahut achha! Main aapko jald details share karti hoon. Bahut achha laga baat karke. Aapka din shubh ho! Namaste."
-After site visit confirmed: ask "Aapka best contact number yahi hai?" then close warmly.
-After ONE soft refusal on visit: offer WhatsApp details instead. After second refusal: close warmly.`,
+    balanced: `YOUR STYLE — HELPFUL FRIEND WHO KNOWS REAL ESTATE:
+Think of yourself as that friend who happens to know everything about Pune property market. You're genuinely curious about what they need, and you want to find them the right fit — not just close a sale.
+- Listen first, sell second. Let them talk.
+- Qualify naturally through conversation — purpose, area, budget, BHK, timeline. ONE at a time, woven into chat.
+- Once budget is clear: "Main aapke liye kuch options shortlist karti hoon — WhatsApp number de sakte ho jahan details bhejoon?"
+- Build value with KB facts before inviting site visit.
+- Offer choice, never pressure: "Main WhatsApp pe bhi bhej sakti hoon, ya ek baar personally site dekh sako — jo comfortable ho."
+- Close warmly: "Bahut achha laga baat karke! Details bhejti hoon. Apna khayaal rakhna. Namaste!"`,
 
-    consultative: `SALES APPROACH — TRUSTED ADVISOR:
-You are a helpful consultant, not a pusher. Your goal is to understand the lead's needs and guide them honestly.
-- First, understand: purpose (investment/self-use), budget range, preferred BHK, timeline.
-- Answer all questions completely and honestly from the KB.
-- Only invite for a site visit when the lead signals genuine interest (asks about pricing, possession, or visiting).
-- NEVER mention site visit more than once if they show hesitation.
-- If not interested: "Theek hai, koi pressure nahi. Aap kabhi bhi hamare office aa sakte hain ya humse call kar sakte hain."
-- Build trust; a good experience today leads to a referral tomorrow.`,
-  }[pitchTone] || pitchBlock?.balanced;
+    consultative: `YOUR STYLE — TRUSTED ADVISOR, ZERO PRESSURE:
+You are not selling. You are helping someone make a good decision — possibly the biggest financial decision of their life. That's a responsibility, not a sales opportunity.
+- Understand their situation completely before suggesting anything.
+- Be honest: if something doesn't fit their needs, say so. They'll trust you more for it.
+- Never mention site visit if they seem uninterested. Let them come to it.
+- If they're not ready: "Koi baat nahi, koi pressure nahi. Jab bhi ready ho — main hoon. Number pe call karo ya WhatsApp karo."
+- Your goal: leave them feeling heard, respected, and well-informed. A good experience today = a referral tomorrow.`,
+  }[pitchTone] || `YOUR STYLE — HELPFUL FRIEND WHO KNOWS REAL ESTATE:
+Think of yourself as that friend who happens to know everything about Pune property market. You're genuinely curious about what they need, and you want to find them the right fit — not just close a sale.
+- Listen first, sell second. Let them talk.
+- Qualify naturally through conversation — purpose, area, budget, BHK, timeline. ONE at a time, woven into chat.
+- Once budget is clear: "Main aapke liye kuch options shortlist karti hoon — WhatsApp number de sakte ho jahan details bhejoon?"
+- Build value with KB facts before inviting site visit.
+- Offer choice, never pressure: "Main WhatsApp pe bhi bhej sakti hoon, ya ek baar personally site dekh sako — jo comfortable ho."
+- Close warmly: "Bahut achha laga baat karke! Details bhejti hoon. Apna khayaal rakhna. Namaste!"`;
+
+  // ── Qualification memory — injected so LLM never re-asks what's already known ──
+  const knownFacts = [];
+  if (qualification.purpose) knownFacts.push(`• Purpose: "${qualification.purpose}" ← ALREADY CONFIRMED, do NOT ask again`);
+  if (qualification.budget)  knownFacts.push(`• Budget: "${qualification.budget}" ← ALREADY CONFIRMED, do NOT ask again`);
+  if (qualification.bhk)     knownFacts.push(`• BHK: "${qualification.bhk}" ← ALREADY CONFIRMED, do NOT ask again`);
+  if (qualification.timeline) knownFacts.push(`• Timeline: "${qualification.timeline}" ← ALREADY CONFIRMED, do NOT ask again`);
+  const memoryBlock = knownFacts.length > 0
+    ? `\n━━━ WHAT YOU ALREADY KNOW — DO NOT RE-ASK ━━━\n${knownFacts.join("\n")}\nUse these facts naturally. Reference them. Never re-ask.\n`
+    : "";
+
+  // ── Marathi lock flag — extra enforcement when language is explicitly locked ──
+  const marathiLockBlock = (language === "mr")
+    ? `\n⚠️ LANGUAGE LOCKED TO MARATHI ⚠️\nThe user has requested Marathi. ALL responses MUST be in Marathi ONLY.\nDo NOT switch to Hindi, Hinglish, or English for any reason — not for garbled text, not for Hindi words in their message, not ever.\nIf the user says anything unclear → reply in Marathi: "माफ करा, नीट ऐकू आलं नाही. एकदा परत सांगाल का?"\n`
+    : "";
+
+  return `You are ${agentName}, a real estate consultant calling from Prop Hunt. You've been doing this for years and you genuinely enjoy it — helping people find the right home or investment is something you take seriously.
+
+Think of yourself as that one friend who happens to know everything about the Pune/Mumbai property market. Not a salesperson. Not a bot. A real person who picks up the phone, listens carefully, and talks like a human being.
+
+${kbBlock}
+
+ABOUT THIS CALL:
+- Lead name: ${lead.name}
+- Interested in: ${lead.project || "property in general"}
+- Budget: ${lead.budget || "not discussed yet"}
+${memoryBlock}${marathiLockBlock}
+
+${languageInstruction}
+
+━━━ HOW YOU TALK — READ THIS CAREFULLY ━━━
+
+YOU ARE NOT A SCRIPT-READER. You are a person having a real conversation.
+
+1. REACT GENUINELY — When someone says something, react like a human would.
+   "Arrey wah, investment ke liye dekh rahe ho? Bahut sahi time hai abhi." — not a robotic "Noted."
+
+2. FOLLOW THE CUSTOMER — If they jump to hospitals, go there. If they ask about a competitor, answer it fully and honestly. Qualification questions will come naturally — don't force them back to the funnel.
+
+3. ONE QUESTION AT A TIME — Never ask two things at once. Always answer their question first, THEN ask yours.
+
+4. KEEP IT SHORT — Max ${wordCap} words per response. On a phone call, long speeches make people zone out.
+
+5. ADMIT UNCERTAINTY LIKE A HUMAN — You don't know everything, and that's fine.
+   "Jahan tak mujhe pata hai, possession 2027 ke aaspaas hai — main confirm karke bata sakti hoon."
+   Never make up exact numbers for projects not in the KB.
+
+6. SELF-CORRECT WITHOUT DRAMA — If they correct you, just say "Haan haan, sahi pakda aapne" and move on. No long apologies, no over-explaining.
+
+7. BE WARM, NOT PERFORMATIVE — "Achha achha", "Arrey wah", "Sahi baat hai" feel natural when used genuinely. But don't layer three reactions together. One real reaction per turn.
+
+8. A LITTLE HUMOR GOES A LONG WAY — A light remark makes you memorable.
+   "Dus lakh mein Pune West mein... haan, thoda mushkil hai — but chalein, dekhte hain kya nikalta hai!" (warm, not dismissive)
+
+9. VARY YOUR OPENINGS — Don't start every response the same way. Mix it up:
+   "Haan bilkul" / "Achha" / "Samjha" / "Dekhiye" / "Arrey wah" / "Sahi baat" / just answer directly sometimes.
+
+━━━ WHAT YOU'RE TRYING TO FIND OUT — weave naturally into conversation ━━━
+1. Purpose — investment ya khud rehne ke liye?
+2. Area — already know: ${lead.project ? `${lead.project} area` : "not discussed"}
+3. Budget — ${lead.budget || "not discussed yet"}
+4. BHK preference
+5. Timeline — kitne time mein decision?
+6. WhatsApp number — after budget confirmed: "Main details bhejti hoon — WhatsApp number share karoge?"
+7. Site visit or WhatsApp details — offer choice, never push
+
+${pitchBlock}
+
+━━━ HANDLING DIFFERENT TYPES OF QUESTIONS ━━━
+
+OUR PROJECT (KB data available):
+→ Use exact KB facts — price, RERA, amenities, possession. Never guess these.
+→ Only mention BHK types that exist in the KB. Never invent configurations.
+→ Something unclear? Clarify first: "Aap loan ki baat kar rahe hain ya configuration ki?"
+
+SAME DEVELOPER, DIFFERENT PROJECT (Mahindra Vivante, Happinest, Eden, etc.):
+→ Answer from your general knowledge about that project.
+→ Then naturally: "Citadel Pimpri mein bhi dekha? Usi range mein bahut value milti hai wahan."
+
+COMPETITOR PROJECT (Shapoorji, Godrej, Lodha, Kolte Patil, etc.):
+→ Be genuinely helpful. Say something real and positive about the developer — they're asking because they're doing research, help them.
+   "Shapoorji Pallonji — bahut bada aur bharosemand group hai yaar, quality ke liye jaane jaate hain. Treetopia Jadhavwadi mein kafi popular project hai unka. Pricing ke baare mein jaanna tha, ya configuration?"
+→ Fully answer what they asked. Then — only once, lightly — mention our project if it's a natural fit.
+→ Never put down competitors. It makes you look small.
+
+CITY / AREA KNOWLEDGE (hospitals, schools, metro, connectivity, markets):
+→ Answer freely and confidently. This builds real trust.
+   "Pimpri mein DY Patil aur Aditya Birla dono hospital paas mein hain — 10-15 minute ki drive."
+   "PCMC mein metro line extend ho rahi hai — connectivity aur better hone wali hai agle 2-3 saal mein."
+
+━━━ NEVER DO THESE ━━━
+✗ "Mujhe pata nahi" — rephrase: "Main confirm karke bata sakti hoon"
+✗ Repeat the project name twice in the same sentence — sounds like an ad
+✗ Ask your next question before fully answering theirs
+✗ Ignore what they said and jump to your funnel step
+✗ Start every response with "Bilkul!" — it becomes a tell
+✗ Make up prices, RERA numbers, or possession dates you don't have in KB
+✗ Give a 5-sentence answer when 2 sentences will do
+
+━━━ CLOSING ━━━
+Natural end: "Bahut achha laga baat karke ${lead.name} ji! Details bhejti hoon WhatsApp pe. Apna khayaal rakhna. Namaste!"
+Not interested: "Koi baat nahi, bilkul. Kabhi bhi sawaal ho — main hoon. Take care!"
+`;const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const https = require("https");
+const WebSocket = require("ws");
+const axios = require("axios");
+const FormData = require("form-data");
+const Redis = require("ioredis");
+const { Counter, Histogram, Registry, collectDefaultMetrics } = require("prom-client");
+const { LanguageManager } = require("./language-manager");
+const { v2: cloudinary } = require("cloudinary");
+const { AgniBridge, createAgniSession } = require("./agni-bridge");
+
+if (process.env.CLOUDINARY_CLOUD_NAME) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+}
+
+const config = {
+  port: parseInt(process.env.PORT || "8000", 10),
+  services: {
+    vad: process.env.VAD_URL || "http://vad:8001",
+    stt: process.env.STT_URL || "http://stt:8002",
+    tts: process.env.TTS_URL || "http://tts:8003",
+    llm: process.env.LLM_URL || "http://llm:11434",
+    crmAdapter: process.env.CRM_ADAPTER_URL || "http://crm-adapter:8010",
+    knowledge: process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:8011",
+    platformApi: process.env.PLATFORM_API_URL || "http://platform-api:8013",
+  },
+  redisUrl: process.env.REDIS_URL || "redis://redis:6379",
+  internalToken: process.env.ORCHESTRATOR_INTERNAL_TOKEN || "local-dev-internal-token",
+  recordingsDir: process.env.RECORDINGS_DIR || "/data/recordings",
+  maxConcurrentCalls: parseInt(process.env.MAX_CONCURRENT || "50", 10),
+  callTimeoutMs: parseInt(process.env.CALL_TIMEOUT_MS || `${5 * 60 * 1000}`, 10),
+  sttTimeoutMs: parseInt(process.env.STT_REQUEST_TIMEOUT_MS || "45000", 10),
+  enablex: {
+    appId: process.env.ENABLEX_APP_ID || "",
+    appKey: process.env.ENABLEX_APP_KEY || "",
+    fromNumber: process.env.ENABLEX_FROM_NUMBER || "",
+    baseUrl: (process.env.ENABLEX_VOICE_BASE_URL || "https://api.enablex.io/voice/v1").replace(/\/$/, ""),
+  },
+  telephonyProvider: (process.env.TELEPHONY_PROVIDER || "enablex").toLowerCase(),
+  // Ravan.ai Agni — set both vars to enable; leave blank to use local STT/LLM/TTS
+  agni: {
+    apiKey: process.env.AGNI_API_KEY || "",
+    agentId: process.env.AGNI_AGENT_ID || "",
+    get enabled() { return !!(this.apiKey && this.agentId); },
+  },
+};
+
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+const registry = new Registry();
+collectDefaultMetrics({ register: registry });
+
+const callsTotal = new Counter({
+  name: "calls_total",
+  help: "Total number of calls handled",
+  labelNames: ["status"],
+  registers: [registry],
+});
+
+const callDuration = new Histogram({
+  name: "call_duration_seconds",
+  help: "End to end call duration",
+  buckets: [5, 15, 30, 60, 120, 300],
+  registers: [registry],
+});
+
+const serviceLatency = new Histogram({
+  name: "service_latency_ms",
+  help: "Latency by dependency",
+  labelNames: ["service"],
+  buckets: [25, 50, 100, 250, 500, 1000, 3000, 5000],
+  registers: [registry],
+});
+
+const redis = new Redis(config.redisUrl, { lazyConnect: false, maxRetriesPerRequest: 2 });
+redis.on("error", (err) => console.error("[redis] connection error:", err.message));
+const sessions = new Map();
+const languageManager = new LanguageManager();
+let acceptingTraffic = true;
+
+// ---------------------------------------------------------------------------
+// Live call feed — broadcast transcript events to dashboard WebSocket clients
+// ---------------------------------------------------------------------------
+function broadcastLiveEvent(session, event) {
+  if (!session?.liveSubscribers?.size) return;
+  const payload = JSON.stringify({ ...event, callSid: session.callSid, timestamp: Date.now() });
+  for (const sub of session.liveSubscribers) {
+    if (sub.readyState === WebSocket.OPEN) {
+      try { sub.send(payload); } catch (_) {}
+    }
+  }
+}
+const enablexAuthHeader = config.enablex.appId && config.enablex.appKey
+  ? `Basic ${Buffer.from(`${config.enablex.appId}:${config.enablex.appKey}`).toString("base64")}`
+  : "";
+
+fs.mkdirSync(config.recordingsDir, { recursive: true });
+
+app.use(express.json({ limit: "5mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+// CORS — allow dashboard (Vercel) and localhost to call all HTTP endpoints
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Internal-Token');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+// Recordings endpoint — Redis-first so files survive container restarts / redeploys.
+// Falls back to local disk for files written this session that haven't been cached yet.
+app.get("/recordings/:callSid/mixed.wav", async (req, res) => {
+  const { callSid } = req.params;
+  try {
+    const b64 = await redis.get(`recording:${callSid}`);
+    if (b64) {
+      const buf = Buffer.from(b64, "base64");
+      res.set("Content-Type", "audio/wav");
+      res.set("Content-Length", buf.length);
+      res.set("Cache-Control", "public, max-age=86400");
+      return res.send(buf);
+    }
+  } catch { /* fall through to disk */ }
+  // Disk fallback (works within the same container session)
+  const diskPath = path.join(config.recordingsDir, safeRecordingId(callSid), "mixed.wav");
+  if (fs.existsSync(diskPath)) return res.sendFile(diskPath);
+  return res.status(404).json({ error: "Recording not found" });
+});
+// Serve other recording files (caller.wav, agent.wav, timeline.json) from disk
+app.use("/recordings", express.static(config.recordingsDir));
+
+function getPublicBaseUrl(req) {
+  const host = process.env.PUBLIC_HOST || req.get("host") || "localhost:8000";
+  const protocol = req.get("x-forwarded-proto") || (host.includes("localhost") ? "http" : "https");
+  return `${protocol}://${host}`.replace(/\/$/, "");
+}
+
+function getPublicWsBaseUrl(req) {
+  return getPublicBaseUrl(req).replace(/^http/i, "ws");
+}
+
+function getConfiguredPublicBaseUrl() {
+  const host = process.env.PUBLIC_HOST || `localhost:${config.port}`;
+  const protocol = host.includes("localhost") ? "http" : "https";
+  return `${protocol}://${host}`.replace(/\/$/, "");
+}
+
+function getConfiguredPublicWsBaseUrl() {
+  return getConfiguredPublicBaseUrl().replace(/^http/i, "ws");
+}
+
+function resolveTelephonyProvider(requestedProvider) {
+  const provider = String(requestedProvider || config.telephonyProvider || "enablex").trim().toLowerCase();
+  return provider === "enablex" ? "enablex" : "simulated";
+}
+
+function hasEnablexConfig() {
+  return Boolean(enablexAuthHeader && config.enablex.fromNumber);
+}
+
+function buildEnablexOpeningLine(leadName = "there") {
+  return `Hello, this is Priya from Prophunt. I am calling regarding your interest in our project. Is this a good time to talk for thirty seconds, ${leadName}?`;
+}
+
+function normalizeEnablexPhoneNumber(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (digits.length === 10) return `91${digits}`;
+  return digits;
+}
+
+async function placeEnablexOutboundCall({ lead, session, openingLine }) {
+  if (!hasEnablexConfig()) {
+    throw new Error("EnableX credentials or caller number are missing");
+  }
+
+  const publicBaseUrl = getConfiguredPublicBaseUrl();
+  const payload = {
+    name: "Prophunt AI Voice Agent",
+    owner_ref: session.callSid,
+    auto_record: false,
+    from: normalizeEnablexPhoneNumber(config.enablex.fromNumber),
+    to: normalizeEnablexPhoneNumber(lead.phone),
+    event_url: `${publicBaseUrl}/call/enablex/events`,
+  };
+
+  let response;
+  try {
+    response = await timed("enablex", () =>
+      axios.post(`${config.enablex.baseUrl}/call`, payload, {
+        headers: {
+          Authorization: enablexAuthHeader,
+          "Content-Type": "application/json",
+        },
+        timeout: 45000,
+      })
+    );
+  } catch (error) {
+    console.error("[enablex] outbound call failed", {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data,
+      from: payload.from,
+      to: payload.to,
+    });
+    throw error;
+  }
+
+  const data = response.data || {};
+  console.log("[enablex] outbound call response", {
+    status: response.status,
+    voice_id: data.voice_id,
+    state: data.state,
+    msg: data.msg,
+  });
+  return {
+    provider_call_id: data.voice_id || data.call_id || data.callId || data.id || data.sid || session.callSid,
+    provider_status: data.state || data.status || "initiated",
+    raw: data,
+  };
+}
+
+async function callEnablexApi(method, pathName, payload = null, options = {}) {
+  if (!enablexAuthHeader) {
+    throw new Error("EnableX credentials are missing");
+  }
+  const response = await timed("enablex", () =>
+    axios({
+      method,
+      url: `${config.enablex.baseUrl}${pathName}`,
+      data: payload,
+      headers: {
+        Authorization: enablexAuthHeader,
+        "Content-Type": "application/json",
+      },
+      timeout: options.timeout || 45000,
+    })
+  );
+  const data = response.data;
+  if (
+    data &&
+    (data.statusCode >= 400 ||
+      data.result >= 400 ||
+      /not found|not allowed|failed|error/i.test(String(data.msg || data.playstate || data.state || "")))
+  ) {
+    const error = new Error(data.msg || data.playstate || data.state || "EnableX API rejected the request");
+    error.response = { status: data.statusCode || data.result || response.status, data };
+    throw error;
+  }
+  return data;
+}
+
+async function callEnablexDeleteRaw(pathName) {
+  if (!enablexAuthHeader) {
+    throw new Error("EnableX credentials are missing");
+  }
+  const endpoint = new URL(`${config.enablex.baseUrl}${pathName}`);
+  return timed("enablex", () =>
+    new Promise((resolve, reject) => {
+      const req = https.request(
+        {
+          protocol: endpoint.protocol,
+          hostname: endpoint.hostname,
+          port: endpoint.port || 443,
+          path: `${endpoint.pathname}${endpoint.search}`,
+          method: "DELETE",
+          headers: {
+            Authorization: enablexAuthHeader,
+            "Content-Type": "application/json",
+          },
+        },
+        (res) => {
+          let body = "";
+          res.on("data", (chunk) => {
+            body += chunk;
+          });
+          res.on("end", () => {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              resolve(body);
+              return;
+            }
+            const error = new Error(`EnableX delete failed with status ${res.statusCode}`);
+            error.response = { status: res.statusCode, data: body };
+            reject(error);
+          });
+        }
+      );
+      req.on("error", reject);
+      req.end("");
+    })
+  );
+}
+
+async function startEnablexStream(voiceId) {
+  const wssHost = `${getConfiguredPublicWsBaseUrl()}/audio/enablex/${encodeURIComponent(voiceId)}`;
+  console.log("[enablex-media] starting stream", { voice_id: voiceId, wss_host: wssHost });
+  return callEnablexApi(
+    "put",
+    `/call/${encodeURIComponent(voiceId)}/stream`,
+    { wss_host: wssHost },
+    { timeout: 10000 }
+  );
+}
+
+async function stopEnablexStream(voiceId) {
+  return callEnablexDeleteRaw(`/call/${encodeURIComponent(voiceId)}/stream`);
+}
+
+async function hangupEnablexCall(voiceId) {
+  return callEnablexDeleteRaw(`/call/${encodeURIComponent(voiceId)}`);
+}
+
+const ENABLEX_STREAM_READY_STATUSES = new Set([
+  "answered",
+  "answer",
+  "connected",
+  "in-progress",
+  "in_progress",
+  "live",
+  "ongoing",
+  "active",
+  "bridged",
+]);
+
+function extractEnablexCallSid(payload = {}) {
+  return payload.voice_id || payload.call_id || payload.callId || payload.id || payload.sid || payload.call_sid;
+}
+
+function normalizeEnablexStatus(payload = {}) {
+  const rawStatus = payload.status || payload.state || payload.event || payload.call_status || payload.callStatus || "";
+  return String(rawStatus).toLowerCase();
+}
+
+function shouldStartEnablexStream(callStatus) {
+  return ENABLEX_STREAM_READY_STATUSES.has(String(callStatus || "").toLowerCase());
+}
+
+function scheduleEnablexStreamStart(session, reason = "scheduled", options = {}) {
+  const force = options.force === true;
+  if (!session?.callSid || session.closed || session.telephony?.streamStarted || (!force && session.telephony?.streamStartScheduled)) {
+    return;
+  }
+  session.telephony = {
+    ...(session.telephony || {}),
+    provider: "enablex",
+    streamStartScheduled: true,
+    streamStartInFlight: false,
+    streamStartReason: reason,
+  };
+
+  const voiceId = session.callSid;
+  // post-dial: only 3 quick attempts (call may already be connected by the time we dial)
+  // event-connected: single immediate attempt — EnableX is ready at this point
+  const isPostDial = reason === "post-dial";
+  const delays = isPostDial
+    ? [0, 1500, 4000]           // 3 attempts only — event-connected handles the rest
+    : [0, 1000, 3000, 6000, 10000, 15000, 21000, 28000]; // robust retry after connected event
+  delays.forEach((delayMs, index) => {
+    setTimeout(async () => {
+      const current = sessions.get(voiceId);
+      if (!current || current.closed || current.telephony?.streamStarted || current.telephony?.streamStartInFlight) return;
+      try {
+        current.telephony = {
+          ...(current.telephony || {}),
+          provider: "enablex",
+          streamStartInFlight: true,
+        };
+        console.log("[enablex-media] stream start attempt", { voice_id: voiceId, attempt: index + 1, reason });
+        const streamResponse = await startEnablexStream(voiceId);
+        console.log("[enablex-media] stream start accepted", { voice_id: voiceId, attempt: index + 1, response: streamResponse });
+        current.telephony = {
+          ...(current.telephony || {}),
+          provider: "enablex",
+          streamStartResponse: streamResponse,
+          streamStartInFlight: false,
+          streamStartScheduled: false,
+          streamStarted: true,
+        };
+        await persistSession(current);
+      } catch (streamError) {
+        const errorPayload = streamError.response?.data || streamError.message;
+        // post-dial failures are expected — EnableX fires stream before call is answered
+        console.log("[enablex-media] stream start failed (will retry)", {
+          voice_id: voiceId,
+          attempt: index + 1,
+          reason,
+          state: errorPayload?.state || "unknown",
+        });
+        current.telephony = {
+          ...(current.telephony || {}),
+          provider: "enablex",
+          streamStartError: errorPayload,
+          streamStartInFlight: false,
+          streamStartScheduled: index < delays.length - 1,
+        };
+        await persistSession(current).catch(() => {});
+      }
+    }, delayMs);
+  });
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+// Extract qualification facts from user transcripts in real-time.
+// Called on every utterance so the agent always has up-to-date session memory.
+function extractQualification(text, session) {
+  if (!session.qualification) {
+    session.qualification = { bhk: null, budget: null, purpose: null, timeline: null };
+  }
+  const q = session.qualification;
+  const t = (text || "").toLowerCase();
+
+  // ── Purpose: investment vs self-use ─────────────────────────────────────────
+  // Covers: romanized Hinglish, phonetic STT variants, Devanagari, Marathi
+  if (!q.purpose) {
+    const investRx = /\b(?:invest(?:ment|ing)?|inwestment|invst|निवेश|गुंतवणूक|गुंतवणुकी|rental[\s-]?(?:yield|return|income|ke liye)?|rent(?:al)?[\s-]?(?:chahiye|ke liye|purpose)?|kiraya|किराया|किराए[\s-]?(?:के लिए|ke liye|sathi|साठी)|resale|re[\s-]?sale|return[\s-]?chahiye|appreciation|bhad[\s-]?vatila|passive[\s-]?income|renting|vikne[\s-]?sathi|बेचने[\s-]?के[\s-]?लिए|बेचना[\s-]?(?:hai|ahe)?|भाड्याने|बेचायचे|flipping|flip)\b/i;
+    const selfUseRx = /\b(?:khud|self[\s-]?use|self[\s-]?yuz|self[\s-]?uz|सेल्फ[\s-]?यूज|खुद[\s-]?(?:ke liye|reh|rah|रहना|रहेंगे|rahna)?|apne[\s-]?liye|apna[\s-]?ghar|स्वयं|rehne[\s-]?ke[\s-]?liye|reh(?:na)?[\s-]?(?:hai|chahiye)?|rahen(?:ge)?|end[\s-]?use|खुद[\s-]?के[\s-]?लिए|खुद[\s-]?रहना|ghar[\s-]?chahiye|house[\s-]?chahiye|ghar[\s-]?ghyaycha|rahaycha[\s-]?ahe|settle(?:ment)?|family[\s-]?ke[\s-]?liye|personal[\s-]?use|स्वतःसाठी|राहायला|स्वतःसाठी|स्वत:[\s-]?साठी|rajniti)\b/i;
+    if (investRx.test(t)) q.purpose = "investment";
+    else if (selfUseRx.test(t)) q.purpose = "self-use";
+  }
+
+  // ── BHK preference ───────────────────────────────────────────────────────────
+  // Handles: digits, English words, Hindi words, Marathi words, phonetic STT forms
+  // (e.g. "टू बी एच के" = ElevenLabs STT output for spoken "2 BHK")
+  if (!q.bhk) {
+    const bhkM =
+      // digit + BHK/bedroom
+      text.match(/([1-4])\s*(?:BHK|बीएचके|बी\s*एच\s*के|bedroom|bhk|b\.?h\.?k)/i) ||
+      // "teen / three / 3 / तीन / थ्री" BHK
+      text.match(/(?:teen|tin|three|3|तीन|थ्री|तिन)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के|bhk)/i) ||
+      // "do / two / 2 / दो / टू / don" BHK
+      text.match(/(?:do|don|two|2|दो|टू)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के|bhk)/i) ||
+      // "ek / one / 1 / एक / वन" BHK
+      text.match(/(?:ek|one|1|एक|वन)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के|bhk)/i) ||
+      // "char / four / 4 / चार / फोर" BHK
+      text.match(/(?:char|chaar|four|4|चार|फोर|फ़ोर)\s*(?:BHK|bedroom|बीएचके|बी\s*एच\s*के|bhk)/i) ||
+      // phonetic Devanagari from STT: "टू बी एच के" / "थ्री बी एच के"
+      text.match(/(टू|वन|थ्री|फोर|फ़ोर)\s+बी\s+एच\s+के/i) ||
+      // "teen / do / ek kamre / kamra" (Hindi room count without BHK keyword)
+      text.match(/(?:teen|तीन|3)\s+(?:kamre?|कमरे?|room)/i) ||
+      text.match(/(?:do|दो|2)\s+(?:kamre?|कमरे?|room)/i) ||
+      text.match(/(?:ek|एक|1)\s+(?:kamre?|कमरे?|room)/i) ||
+      // studio / 1RK
+      text.match(/(?:studio|1\s*RK|1rk|ek[\s-]?room[\s-]?kitchen)/i);
+
+    if (bhkM) {
+      const raw = bhkM[1] || bhkM[0];
+      let n;
+      if (/studio|1rk|1\s*rk|ek[\s-]?room[\s-]?kitchen/i.test(raw)) n = "studio";
+      else if (/teen|tin|three|3|तीन|थ्री|तिन/.test(raw)) n = "3";
+      else if (/do|don|two|2|दो|टू/.test(raw)) n = "2";
+      else if (/ek|one|1|एक|वन/.test(raw)) n = "1";
+      else if (/char|chaar|four|4|चार|फोर|फ़ोर/.test(raw)) n = "4";
+      else n = raw.replace(/\D/g, "") || raw;
+      q.bhk = n === "studio" ? "Studio/1RK" : `${n}BHK`;
+    }
+  }
+
+  // ── Budget ───────────────────────────────────────────────────────────────────
+  // Word-number table covers Hindi, Urdu, Marathi spoken forms + Hinglish phonetics
+  if (!q.budget) {
+    const wordNumMap = {
+      // Romanized Hindi/Urdu
+      ek: "1", do: "2", "dhai": "2.5", teen: "3", char: "4", chaar: "4",
+      paanch: "5", panch: "5", chhe: "6", saat: "7", saath: "7", aath: "8",
+      nau: "9", das: "10", gyarah: "11", barah: "12", terah: "13", chaudah: "14",
+      pandrah: "15", solah: "16", satrah: "17", atharah: "18", unnis: "19",
+      bees: "20", pachees: "25", pachis: "25", tees: "30", paintees: "35",
+      chalis: "40", paintaalis: "45", pachaas: "50", pachpan: "55",
+      saath: "70", sattar: "70", sitter: "70", assi: "80", nabbe: "90", sau: "100",
+      // Marathi romanized
+      ek: "1", don: "2", tin: "3", char: "4", paach: "5", sahaa: "6",
+      saat: "7", aath: "8", nav: "9", daha: "10", pandhra: "15", vees: "20",
+      panchavees: "25", tees: "30", chalees: "40", panna: "50", sattar: "70",
+      // Devanagari
+      एक: "1", दो: "2", "डेढ़": "1.5", ढाई: "2.5", तीन: "3", चार: "4",
+      पाँच: "5", पांच: "5", छह: "6", सात: "7", आठ: "8", नौ: "9",
+      दस: "10", ग्यारह: "11", बारह: "12", पंद्रह: "15", बीस: "20",
+      पच्चीस: "25", तीस: "30", पैंतीस: "35", चालीस: "40", पैंतालीस: "45",
+      पचास: "50", साठ: "60", सत्तर: "70", अस्सी: "80", नब्बे: "90", सौ: "100",
+      // Marathi Devanagari
+      दोन: "2", तीन: "3", पाच: "5", सहा: "6", सात: "7", आठ: "8", नऊ: "9",
+      दहा: "10", पंधरा: "15", वीस: "20", पंचवीस: "25", तीस: "30",
+      पन्नास: "50", सत्तर: "70",
+    };
+    let normText = text;
+    for (const [word, digit] of Object.entries(wordNumMap)) {
+      normText = normText.replace(new RegExp(`\\b${word}\\b`, "gi"), digit);
+    }
+    // Range pattern: "50 se 70 lakh" → pick upper bound
+    const rangeM = normText.match(/(\d+(?:\.\d+)?)\s*(?:se|to|-)\s*(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख|लख|lacs)/i)
+                || normText.match(/(\d+(?:\.\d+)?)\s*(?:se|to|-)\s*(\d+(?:\.\d+)?)\s*(?:crore|cr\.?\b|करोड़|कोटी|karor|karore|karod)/i);
+    if (rangeM) {
+      const unit = /crore|cr\b|करोड़|कोटी|karor|karore|karod/i.test(normText) ? "crore" : "lakh";
+      q.budget = `${rangeM[1]}-${rangeM[2]} ${unit}`;
+    } else {
+      const croreM = normText.match(/(\d+(?:\.\d+)?)\s*(?:crore|cr\.?\b|करोड़|कोटी|karor|karore|karod|koti|कोटी)/i);
+      const lakhM  = normText.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख|लख|lacs|laakh)/i);
+      if (croreM) q.budget = `${croreM[1]} crore`;
+      else if (lakhM) q.budget = `${lakhM[1]} lakh`;
+    }
+  }
+
+  // ── Timeline ─────────────────────────────────────────────────────────────────
+  if (!q.timeline) {
+    if (/\b(?:immediately|abhi[\s-]?chahiye|turant|jaldi[\s-]?chahiye|urgently|asap|as[\s-]?soon|kal[\s-]?chahiye|ready[\s-]?possession|ready[\s-]?to[\s-]?move|6[\s-]?month|6[\s-]?mahine|this[\s-]?year|is[\s-]?saal|is[\s-]?mahine|aaj|kal|next[\s-]?month|agla[\s-]?mahina|possession[\s-]?chahiye|abhi[\s-]?lena|shift[\s-]?karna|tayaar[\s-]?hoon)\b/i.test(t))
+      q.timeline = "immediate";
+    else if (/\b(?:next[\s-]?year|agle[\s-]?saal|pudh(?:il|cha)[\s-]?varsh|1[\s-]?(?:year|sal|saal|वर्ष|साल)|2026|ek[\s-]?saal[\s-]?mein|within[\s-]?a[\s-]?year)\b/i.test(t))
+      q.timeline = "next year";
+    else if (/\b(?:2[\s-]?(?:se|to|-)?[\s-]?3[\s-]?(?:year|saal|sal|वर्ष)|2-3|baad[\s-]?mein|later|phir[\s-]?dekhenge|baad[\s-]?mein[\s-]?dekhte|jab[\s-]?milega|abhi[\s-]?nahi|sochna[\s-]?hai|time[\s-]?lagega|2[\s-]?saal|teen[\s-]?saal|3[\s-]?year)\b/i.test(t))
+      q.timeline = "2-3 years";
+  }
+}
+
+function buildSystemPrompt(lead, knowledgeContext, language, agentConfig = {}, qualification = {}) {
+  const hasKB = knowledgeContext && knowledgeContext.trim().length > 30;
+  const kbBlock = hasKB
+    ? `PROJECT KNOWLEDGE BASE — Answer ALL questions directly from this. Never say "I will check" or "let me verify":\n${knowledgeContext}`
+    : `PROJECT: ${lead.project || "our project"}`;
+
+  // ── PRIORITY: use system prompt authored in the Agents tab ───────────────
+  // The frontend generates the full prompt with {{placeholders}}; we fill them here.
+  if (agentConfig.systemPrompt && agentConfig.systemPrompt.trim().length > 50) {
+    return agentConfig.systemPrompt
+      .replace(/\{\{KNOWLEDGE_BASE\}\}/g,  kbBlock)
+      .replace(/\{\{LEAD_NAME\}\}/g,       lead.name         || "ji")
+      .replace(/\{\{PROJECT_NAME\}\}/g,    lead.project      || "the project")
+      .replace(/\{\{LEAD_BUDGET\}\}/g,     lead.budget       || "not discussed yet");
+  }
+
+  // ── FALLBACK: auto-generate (used when no agent is configured in dashboard) ──
+  const lang = normalizeLanguageToISO(language || lead.language_preference || lead.language || "auto");
+  const langNames = { hi: "Hindi", mr: "Marathi", ta: "Tamil", te: "Telugu", pa: "Punjabi", bn: "Bengali", gu: "Gujarati", kn: "Kannada", ml: "Malayalam", en: "English" };
+  const langLabel = langNames[lang];
+
+  // ── Agent config with defaults ────────────────────────────────────────────
+  const agentName      = agentConfig.agentName      || "Priya";
+  const wordCap        = parseInt(agentConfig.wordCap || "30", 10);
+  const pitchTone      = agentConfig.pitchTone      || "balanced";       // aggressive | balanced | consultative
+  const langStrictness = agentConfig.langStrictness  || "auto";          // auto | hinglish | pure-hindi
+  const escalationLine = agentConfig.escalationLine  ||
+    "Iske liye main aapko hamare sales expert se connect karti hoon jo bilkul sahi detail de sakenge.";
+
+  // ── Language instruction — fully adaptive, no language barrier ───────────
+  // ElevenLabs TTS speaks any language the LLM writes — no need to force Hindi.
+  const languageInstruction = `LANGUAGE RULE — STRICT:
+
+SUPPORTED LANGUAGES: Hindi, Marathi, English, Hinglish (mixed Hindi-English).
+These are the only languages you speak on this call.
+
+CURRENT CONVERSATION LANGUAGE: ${language}
+You MUST reply in this language unless the user EXPLICITLY requests a change (see below).
+
+LANGUAGE MATCHING:
+- language=hi or hin → reply PURE Hindi (Devanagari only). No Marathi, no English mixing.
+- language=mr → reply PURE Marathi. No Hindi, no English mixing.
+- language=en → reply in English only.
+- language=hinglish → reply in natural Hinglish. Match their mix ratio.
+- Garbled, unclear, or noisy text → stay in current language. Never switch.
+
+LANGUAGE SWITCHING — EXTREMELY STRICT RULE:
+NEVER switch language based on what words or script the user uses in their message.
+ONLY switch if the user EXPLICITLY asks to change language. Recognized Marathi requests:
+  • "marathi mein bolo" / "marathi me baat karo" / "marathi mein baat karte hai"
+  • "क्या हम मराटी में बात कर सकते हैं?" / "क्या हम मराठी में बात कर सकते हैं?"
+  • "marathi madhye bola" / "marathi bol" / any clear request to speak Marathi
+Recognized Hindi requests: "hindi mein bolo" / "hindi me baat karo"
+Recognized English requests: "english mein bolo" / "speak in english"
+If you see Marathi-looking words, Marathi script, or mixed text but NO explicit request — DO NOT switch. Stay in current language.
+Noise, garbled audio, partial words = NOT a language switch request.
+
+LANGUAGE LOCK — CRITICAL:
+Once a language is established, MAINTAIN it for the entire conversation.
+- If user said "Marathi mein bolo" → stay in Marathi even if they use Hindi words like "हाँ", "ठीक है", "ओके".
+- One Hindi/Marathi/English word mixed in = NOT a language switch. It's just natural bilingual speech.
+
+Keep responses SHORT — max ${wordCap} words — one clear point per reply.`;
+
+
+  // ── Sales approach by tone — written like coaching notes for a human salesperson ──
+  const pitchBlock = {
+    aggressive: `YOUR STYLE — WARM BUT DRIVEN:
+You genuinely want to help them, but you also know a good deal when you see one — and you want them to not miss it.
+- Always answer their question first, THEN naturally move toward next step.
+- After sharing project info, casually invite: "Ek baar aake dekh lo — 20-30 minute mein picture clear ho jaati hai. Kab free ho?"
+- If they say "sochna hai": "Haan bilkul, sochna chahiye itne bade decision mein. Bas ek site visit karo na — bina dekhe sochna thoda mushkil hota hai. Weekend chalega?"
+- Second soft refusal: let it go warmly. "Koi baat nahi. Main WhatsApp pe details bhej deti hoon — jab mann kare dekh lena."
+- Budget objection: "Dekhiye, EMI mein tod dein toh figure itna bada nahi lagta. Exact number bata doon?"
+- Never pressure. Urgency should feel real, not manufactured.`,
+
+    balanced: `YOUR STYLE — HELPFUL FRIEND WHO KNOWS REAL ESTATE:
+Think of yourself as that friend who happens to know everything about Pune property market. You're genuinely curious about what they need, and you want to find them the right fit — not just close a sale.
+- Listen first, sell second. Let them talk.
+- Qualify naturally through conversation — purpose, area, budget, BHK, timeline. ONE at a time, woven into chat.
+- Once budget is clear: "Main aapke liye kuch options shortlist karti hoon — WhatsApp number de sakte ho jahan details bhejoon?"
+- Build value with KB facts before inviting site visit.
+- Offer choice, never pressure: "Main WhatsApp pe bhi bhej sakti hoon, ya ek baar personally site dekh sako — jo comfortable ho."
+- Close warmly: "Bahut achha laga baat karke! Details bhejti hoon. Apna khayaal rakhna. Namaste!"`,
+
+    consultative: `YOUR STYLE — TRUSTED ADVISOR, ZERO PRESSURE:
+You are not selling. You are helping someone make a good decision — possibly the biggest financial decision of their life. That's a responsibility, not a sales opportunity.
+- Understand their situation completely before suggesting anything.
+- Be honest: if something doesn't fit their needs, say so. They'll trust you more for it.
+- Never mention site visit if they seem uninterested. Let them come to it.
+- If they're not ready: "Koi baat nahi, koi pressure nahi. Jab bhi ready ho — main hoon. Number pe call karo ya WhatsApp karo."
+- Your goal: leave them feeling heard, respected, and well-informed. A good experience today = a referral tomorrow.`,
+  }[pitchTone] || `YOUR STYLE — HELPFUL FRIEND WHO KNOWS REAL ESTATE:
+Think of yourself as that friend who happens to know everything about Pune property market. You're genuinely curious about what they need, and you want to find them the right fit — not just close a sale.
+- Listen first, sell second. Let them talk.
+- Qualify naturally through conversation — purpose, area, budget, BHK, timeline. ONE at a time, woven into chat.
+- Once budget is clear: "Main aapke liye kuch options shortlist karti hoon — WhatsApp number de sakte ho jahan details bhejoon?"
+- Build value with KB facts before inviting site visit.
+- Offer choice, never pressure: "Main WhatsApp pe bhi bhej sakti hoon, ya ek baar personally site dekh sako — jo comfortable ho."
+- Close warmly: "Bahut achha laga baat karke! Details bhejti hoon. Apna khayaal rakhna. Namaste!"`;
 
   // ── Qualification memory — injected so LLM never re-asks what's already known ──
   const knownFacts = [];
