@@ -714,10 +714,13 @@ COMPLETELY UNKNOWN / OBSCURE PROJECT (small local builder, project you've genuin
 → NEVER make up prices, possession dates, or RERA numbers you don't have.
 → After answering (with or without web data): pivot once — "Waise, aap ki requirement ke hisaab se hamare paas bhi ek strong option hai — compare karein?"
 
-CITY / AREA KNOWLEDGE (hospitals, schools, metro, connectivity, markets):
-→ Answer freely and confidently. This builds real trust.
-   "Pimpri mein DY Patil aur Aditya Birla dono hospital paas mein hain — 10-15 minute ki drive."
-   "PCMC mein metro line extend ho rahi hai — connectivity aur better hone wali hai agle 2-3 saal mein."
+LOCATION / AMENITY QUESTIONS (nearest metro, hospital, school, distance, connectivity):
+→ Check "WEB SEARCH RESULTS" injected above — a live search was run with the project name + city, so results are geographically accurate for this specific location.
+→ Use those results to answer precisely: station names, distances, travel times.
+→ If no search results available: use general knowledge but qualify it — "generally", "approximately" — never state a wrong distance as a fact.
+→ These questions build huge trust — answer them well and specifically.
+   Good: "Pimpri metro station sabse paas hai — roughly 1.5 km, 5 minute ki drive. DY Patil hospital bhi 10 minute mein milta hai."
+   Bad: "Hamare paas yeh information nahi hai." ← never say this
 
 ━━━ NEVER DO THESE ━━━
 ✗ "Mujhe pata nahi" — rephrase: "Main confirm karke bata sakti hoon"
@@ -1732,22 +1735,51 @@ async function detectLanguage(audioBuffer) {
 }
 
 // ── Real estate web search via Tavily ────────────────────────────────────────
-// Called when user asks about a project not covered by the KB.
-// Returns a short, clean context string to inject into the LLM prompt.
-// Fails silently (returns null) so the call is never interrupted.
-const PROJECT_SEARCH_KEYWORDS = /\b(project|residency|residences|towers|heights|society|township|enclave|gardens|meadows|villas|estate|avenue|park|city|phase|sector|vivanta|vivante|happinest|treetopia|lodha|godrej|shapoorji|prestige|brigade|sobha|kolte|piramal|tata|birla|mahindra(?!\s+citadel)|runwal|raymond|rustomjee|hiranandani|oberoi|wadhwa|kalpataru|nirmal|raheja|kanakia|sun\s+builders|sumadhura|assetz|puravankara|salarpuria|adarsh|mantri|mpa|pride|marvel|majestique|panorama|saarrthi|naiknavare|rohan|nyati|kohinoor|kunal|gagan|vascon|panchshil|abil|k\s+raheja|el\s+cid|mohamadiya)\b/i;
+// Fires when user asks something not covered by the KB — project info OR
+// location/amenity questions (metro, hospital, school, connectivity etc.)
+// Builds a geo-aware query using the project name + city for accurate results.
+// Fails silently so calls are never interrupted.
 
-async function searchProjectInfo(userText, lead) {
+const PROJECT_KEYWORDS = /\b(project|residency|residences|towers|heights|society|township|enclave|gardens|meadows|villas|estate|avenue|park|city|phase|sector|vivanta|vivante|happinest|treetopia|lodha|godrej|shapoorji|prestige|brigade|sobha|kolte|piramal|tata|birla|mahindra(?!\s+citadel)|runwal|raymond|rustomjee|hiranandani|oberoi|wadhwa|kalpataru|nirmal|raheja|kanakia|sun\s+builders|sumadhura|assetz|puravankara|salarpuria|adarsh|mantri|mpa|pride|marvel|majestique|panorama|saarrthi|naiknavare|rohan|nyati|kohinoor|kunal|gagan|vascon|panchshil|abil|k\s+raheja|el\s+cid|mohamadiya)\b/i;
+
+const LOCATION_KEYWORDS = /\b(metro|station|hospital|school|college|university|mall|market|airport|highway|expressway|flyover|bus\s*stop|railway|train|connectivity|distance|nearest|nearby|close\s*to|how\s*far|minutes?\s*from|km\s*from|road|route|reach|travelling?|commute|traffic|parking|garden|park|lake|temple|church|mosque|police|fire\s*station|post\s*office|bank|atm|petrol|pharmacy|clinic|doctor)\b/i;
+
+async function searchWebContext(userText, lead, knowledgeContext) {
   const tavilyKey = process.env.TAVILY_API_KEY;
   if (!tavilyKey) return null;
-  if (!PROJECT_SEARCH_KEYWORDS.test(userText)) return null;
 
-  // Don't search for our own project — KB handles it
-  const ourProject = (lead?.project || "").toLowerCase();
-  const ourProjectWords = ourProject.split(/\s+/).filter(w => w.length > 3);
-  if (ourProjectWords.length > 0 && ourProjectWords.every(w => userText.toLowerCase().includes(w))) return null;
+  const text = userText.toLowerCase();
+  const isProjectQuery  = PROJECT_KEYWORDS.test(userText);
+  const isLocationQuery = LOCATION_KEYWORDS.test(userText);
 
-  const query = `${userText} real estate India price possession configuration 2025`;
+  if (!isProjectQuery && !isLocationQuery) return null;
+
+  // For location questions about our own project — check KB first, skip search if answered
+  const projectName = lead?.project || "";
+  const projectCity = lead?.city || "Pune";
+  const ourProjectWords = projectName.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  const isAboutOurProject = ourProjectWords.length > 0 && ourProjectWords.some(w => text.includes(w));
+
+  if (isAboutOurProject && knowledgeContext && knowledgeContext.length > 100) {
+    // KB exists for our project — only search if it's a location question KB likely won't have
+    if (!isLocationQuery) return null;
+    // Location question about our project and KB doesn't mention the specific topic
+    const locationTopic = (userText.match(LOCATION_KEYWORDS) || [])[0] || "";
+    if (locationTopic && knowledgeContext.toLowerCase().includes(locationTopic.toLowerCase())) return null;
+  }
+
+  // Build a precise, geo-aware query
+  let query;
+  if (isLocationQuery && projectName) {
+    // e.g. "nearest metro station to Mahindra Citadel Pimpri Pune"
+    query = `${userText} near ${projectName} ${projectCity} India`;
+  } else if (isProjectQuery) {
+    // e.g. "Shapoorji Treetopia Jadhavwadi Pune price possession configuration 2025"
+    query = `${userText} ${projectCity} India real estate price possession 2025`;
+  } else {
+    query = `${userText} ${projectName} ${projectCity} India`;
+  }
+
   const t0 = Date.now();
   try {
     const res = await axios.post(
@@ -1765,12 +1797,12 @@ async function searchProjectInfo(userText, lead) {
     const answer = (res.data?.answer || "").trim();
     const snippets = (res.data?.results || [])
       .slice(0, 2)
-      .map(r => r.content?.slice(0, 300))
+      .map(r => r.content?.slice(0, 400))
       .filter(Boolean)
       .join("\n");
-    const context = (answer || snippets).slice(0, 800);
+    const context = (answer || snippets).slice(0, 900);
     if (!context) return null;
-    console.log(`[search] Tavily latency=${Date.now()-t0}ms query="${query.slice(0,60)}"`);
+    console.log(`[search] Tavily ${Date.now()-t0}ms type=${isLocationQuery?"location":"project"} q="${query.slice(0,70)}"`);
     return context;
   } catch (err) {
     console.warn(`[search] Tavily failed (${Date.now()-t0}ms): ${err.message}`);
@@ -2272,7 +2304,7 @@ async function getLLMResponse(session, userText) {
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
 
   // Web search — fires when user asks about a project not in KB
-  const webSearchContext = await searchProjectInfo(userText, session.lead);
+  const webSearchContext = await searchWebContext(userText, session.lead, knowledgeContext);
 
   // Send last 8 turns (16 messages) — needed for longer conversations (8+ min calls)
   // so agent remembers investment/BHK/budget stated early in the call.
@@ -3524,7 +3556,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
 
   // Web search — fires in parallel-ish (await here, but KB fetch already finished above)
-  const webSearchContext = await searchProjectInfo(userText, session.lead);
+  const webSearchContext = await searchWebContext(userText, session.lead, knowledgeContext);
 
   const historyContext = session.history.slice(-16).slice(0, -1);
   const searchBlock = webSearchContext
