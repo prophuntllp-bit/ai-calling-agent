@@ -708,11 +708,11 @@ COMPETITOR PROJECT (Shapoorji, Godrej, Lodha, Kolte Patil, etc.):
 → Never put down competitors. It makes you look small.
 
 COMPLETELY UNKNOWN / OBSCURE PROJECT (small local builder, project you've genuinely never heard of):
-→ DO NOT make up details. DO NOT guess prices, possession dates, RERA numbers.
-→ Be honest like a real consultant would be — warmly, not coldly:
-   "Yaar, is specific project ke baare mein meri detailed information nahi hai abhi — main accurate hi bolunga/bolungi, toh galat info dena theek nahi lagta. Aap developer ka naam ya location share karo, main thoda aur samjhne ki koshish karta/karti hoon."
-→ Then pivot naturally: "Waise aap generally investment ke liye dekh rahe ho ya rehne ke liye? Kyunki us hisaab se kuch options suggest kar sakti hoon."
-→ NEVER say "mujhe bilkul pata nahi" coldly. Always frame it as wanting to give accurate info.
+→ A web search has been run and results injected above as "WEB SEARCH RESULTS" — USE THEM to answer accurately.
+→ If web search results are available: answer confidently using those facts, then naturally pivot to our project.
+→ If no web search results are present: be honest and warm — "Yaar, is specific project ke baare mein meri detailed info nahi hai abhi. Developer ka naam ya location confirm karo, main pata karta/karti hoon."
+→ NEVER make up prices, possession dates, or RERA numbers you don't have.
+→ After answering (with or without web data): pivot once — "Waise, aap ki requirement ke hisaab se hamare paas bhi ek strong option hai — compare karein?"
 
 CITY / AREA KNOWLEDGE (hospitals, schools, metro, connectivity, markets):
 → Answer freely and confidently. This builds real trust.
@@ -1731,6 +1731,53 @@ async function detectLanguage(audioBuffer) {
   return response.data;
 }
 
+// ── Real estate web search via Tavily ────────────────────────────────────────
+// Called when user asks about a project not covered by the KB.
+// Returns a short, clean context string to inject into the LLM prompt.
+// Fails silently (returns null) so the call is never interrupted.
+const PROJECT_SEARCH_KEYWORDS = /\b(project|residency|residences|towers|heights|society|township|enclave|gardens|meadows|villas|estate|avenue|park|city|phase|sector|vivanta|vivante|happinest|treetopia|lodha|godrej|shapoorji|prestige|brigade|sobha|kolte|piramal|tata|birla|mahindra(?!\s+citadel)|runwal|raymond|rustomjee|hiranandani|oberoi|wadhwa|kalpataru|nirmal|raheja|kanakia|sun\s+builders|sumadhura|assetz|puravankara|salarpuria|adarsh|mantri|mpa|pride|marvel|majestique|panorama|saarrthi|naiknavare|rohan|nyati|kohinoor|kunal|gagan|vascon|panchshil|abil|k\s+raheja|el\s+cid|mohamadiya)\b/i;
+
+async function searchProjectInfo(userText, lead) {
+  const tavilyKey = process.env.TAVILY_API_KEY;
+  if (!tavilyKey) return null;
+  if (!PROJECT_SEARCH_KEYWORDS.test(userText)) return null;
+
+  // Don't search for our own project — KB handles it
+  const ourProject = (lead?.project || "").toLowerCase();
+  const ourProjectWords = ourProject.split(/\s+/).filter(w => w.length > 3);
+  if (ourProjectWords.length > 0 && ourProjectWords.every(w => userText.toLowerCase().includes(w))) return null;
+
+  const query = `${userText} real estate India price possession configuration 2025`;
+  const t0 = Date.now();
+  try {
+    const res = await axios.post(
+      "https://api.tavily.com/search",
+      {
+        api_key: tavilyKey,
+        query,
+        search_depth: "basic",
+        max_results: 3,
+        include_answer: true,
+        include_raw_content: false,
+      },
+      { timeout: 4000 }
+    );
+    const answer = (res.data?.answer || "").trim();
+    const snippets = (res.data?.results || [])
+      .slice(0, 2)
+      .map(r => r.content?.slice(0, 300))
+      .filter(Boolean)
+      .join("\n");
+    const context = (answer || snippets).slice(0, 800);
+    if (!context) return null;
+    console.log(`[search] Tavily latency=${Date.now()-t0}ms query="${query.slice(0,60)}"`);
+    return context;
+  } catch (err) {
+    console.warn(`[search] Tavily failed (${Date.now()-t0}ms): ${err.message}`);
+    return null;
+  }
+}
+
 async function transcribeAudio(audioBuffer, language = "auto") {
   const form = new FormData();
   form.append("audio", ensureWavBuffer(audioBuffer), { filename: "audio.wav", contentType: "audio/wav" });
@@ -2224,11 +2271,24 @@ async function getLLMResponse(session, userText) {
 
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
 
+  // Web search — fires when user asks about a project not in KB
+  const webSearchContext = await searchProjectInfo(userText, session.lead);
+
   // Send last 8 turns (16 messages) — needed for longer conversations (8+ min calls)
   // so agent remembers investment/BHK/budget stated early in the call.
   const historyContext = session.history.slice(-16).slice(0, -1);
   const currentTurn   = { role: "user", content: `[CURRENT — respond to this only]: ${userText}` };
-  const messages = [{ role: "system", content: systemPrompt }, ...historyContext, currentTurn];
+
+  // Inject web search results as a system-level context block when available
+  const searchBlock = webSearchContext
+    ? { role: "system", content: `WEB SEARCH RESULTS for "${userText}" (use this to answer accurately, then pivot to our project):\n${webSearchContext}` }
+    : null;
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...historyContext,
+    ...(searchBlock ? [searchBlock] : []),
+    currentTurn,
+  ];
 
   // ── Safe error body serializer — avoids circular JSON from stream responses ──
   // When responseType:'stream', err.response?.data is an IncomingMessage (TLSSocket)
@@ -3462,10 +3522,18 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       ? (languageManager.getBaseLanguage(callSid) || "hi")
       : language);
   const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
+
+  // Web search — fires in parallel-ish (await here, but KB fetch already finished above)
+  const webSearchContext = await searchProjectInfo(userText, session.lead);
+
   const historyContext = session.history.slice(-16).slice(0, -1);
+  const searchBlock = webSearchContext
+    ? { role: "system", content: `WEB SEARCH RESULTS for "${userText}" (use this to answer accurately, then pivot to our project):\n${webSearchContext}` }
+    : null;
   const messages = [
     { role: "system", content: systemPrompt },
     ...historyContext,
+    ...(searchBlock ? [searchBlock] : []),
     { role: "user",   content: `[CURRENT — respond to this only]: ${userText}` },
   ];
 
