@@ -1705,21 +1705,38 @@ async function getOpeningMessage(session) {
         return capReplyWords(threeSentences, 30);
       })()
     : (() => {
-        // No opening line configured — Maya/Agni-style: name + company + project interest + permission ask
+        // No opening line configured — pick randomly from a pool of Maya/Agni-style openers.
+        // Each variant: name check + company intro + project interest reference + permission ask.
         const agentName  = session.agentConfig?.agentName  || "Priya";
         const company    = session.agentConfig?.companyName || "Prophunt";
         const proj       = projectName !== "hamare project" ? projectName : "";
+        const p          = proj || "hamare project";
         const lang       = session._lockedLanguage
           || normalizeLanguageToISO(session.lead?.language || "auto");
 
-        const smartGreeting =
-          lang === "mr"
-            ? `नमस्कार ${leadName}जी! मी ${agentName} बोलतेय, ${company} मधून. आपण ${proj || "आमच्या project"} मध्ये interest दाखवला होता — आत्ता दोन मिनिट बोलता येईल का?`
-          : lang === "en"
-            ? `Hello ${leadName}! This is ${agentName} calling from ${company}. You had shown interest in ${proj || "one of our properties"} — do you have a couple of minutes?`
-            : `Namaste ${leadName} ji! Main ${agentName} bol rahi hoon ${company} se. Aapne ${proj ? proj + " mein" : "hamare project mein"} interest dikhaya tha — kya abhi do minute hain?`;
+        const pools = {
+          hi: [
+            `Namaste ${leadName} ji! Main ${agentName} bol rahi hoon ${company} se. Aapne ${p} mein interest dikhaya tha — kya abhi do minute hain?`,
+            `Hello ${leadName} ji, ${agentName} calling from ${company}. Aapka ${p} ke liye inquiry tha — abhi baat kar sakte hain?`,
+            `${leadName} ji, namaste! Main ${agentName} hoon, ${company} se. ${p} ke baare mein thodi baat karni thi — convenient hai abhi?`,
+            `Arre ${leadName} ji, namaste! ${agentName} here from ${company}. Aapne recently ${p} mein interest show kiya tha — kya thoda waqt hai?`,
+            `Hi ${leadName} ji! Main ${agentName} bol rahi hoon ${company} ki taraf se. ${p} ke liye aapka enquiry tha — kya abhi baat ho sakti hai?`,
+          ],
+          mr: [
+            `नमस्कार ${leadName}जी! मी ${agentName} बोलतेय, ${company} मधून. आपण ${p} मध्ये interest दाखवला होता — आत्ता दोन मिनिट बोलता येईल का?`,
+            `नमस्कार! ${leadName}जी बोलत आहात का? मी ${agentName}, ${company} मधून. ${p} बद्दल बोलायचे होते — वेळ आहे का आत्ता?`,
+            `हॅलो ${leadName}जी, मी ${agentName} बोलतेय ${company} कडून. ${p} साठी तुमची enquiry होती — आत्ता थोडं बोलता येईल का?`,
+          ],
+          en: [
+            `Hello ${leadName}! This is ${agentName} calling from ${company}. You had shown interest in ${proj || "one of our properties"} — do you have a couple of minutes?`,
+            `Hi ${leadName}, ${agentName} here from ${company}. I'm calling about your enquiry for ${proj || "our project"} — is now a good time to chat?`,
+            `Good day ${leadName}! I'm ${agentName} from ${company}. You recently showed interest in ${proj || "a property with us"} — do you have two minutes?`,
+          ],
+        };
 
-        return capReplyWords(smartGreeting, 35);
+        const pool   = pools[lang] || pools.hi;
+        const picked = pool[Math.floor(Math.random() * pool.length)];
+        return capReplyWords(picked, 35);
       })();
 
   // Seed history so subsequent LLM turns have context of how the call started
@@ -2721,7 +2738,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // Set high (30) so a normal reply is NEVER hard-cut mid-word; this only catches
   // a true runaway. The LLM finishes its sentence naturally well before 30.
   const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS_STREAM || "30", 10));
-  const model    = process.env.ELEVENLABS_MODEL || "eleven_turbo_v2_5";
+  const model    = process.env.ELEVENLABS_MODEL || "eleven_v3";
 
   // Voice ID — same resolution as TTS service
   const gender = session.campaign?.voice_gender || session.lead?.voice_gender || "female";
@@ -2796,11 +2813,9 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
     const wsUrl =
       `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input` +
       // ulaw_8000 = G.711 μ-law at 8kHz — directly compatible with EnableX, no conversion needed.
-      // pcm_8000 is NOT supported by ElevenLabs WebSocket streaming (stream-input endpoint)
-      // and silently falls back to MP3 → treating MP3 bytes as PCM → crackling/garbage audio.
-      // optimize_streaming_latency=1: level 0 = max quality, level 4 = max speed.
-      // Level 1 gives noticeably cleaner audio vs level 2 with only ~50ms extra latency.
-      `?model_id=${model}&output_format=ulaw_8000&optimize_streaming_latency=1`;
+      // optimize_streaming_latency is only supported on turbo/flash models — v3 ignores or rejects it.
+      `?model_id=${model}&output_format=ulaw_8000` +
+      (model.includes("v3") ? "" : "&optimize_streaming_latency=1");
     let elevenWs;
     try { elevenWs = new WebSocket(wsUrl, { headers: { "xi-api-key": elevenKey } }); }
     catch (e) { return reject(e); }
