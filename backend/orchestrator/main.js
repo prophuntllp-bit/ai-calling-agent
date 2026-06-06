@@ -167,8 +167,9 @@ function hasEnablexConfig() {
   return Boolean(enablexAuthHeader && config.enablex.fromNumber);
 }
 
-function buildEnablexOpeningLine(leadName = "there") {
-  return `Hello, this is Priya from Prophunt. I am calling regarding your interest in our project. Is this a good time to talk for thirty seconds, ${leadName}?`;
+function buildEnablexOpeningLine(leadName = "there", agentName = "Priya", companyName = "Prophunt", projectName = "") {
+  const proj = projectName ? `${projectName} mein` : "hamare project mein";
+  return `Namaste ${leadName} ji! Main ${agentName} bol rahi hoon ${companyName} se. Aapne ${proj} interest dikhaya tha — kya abhi do minute hain?`;
 }
 
 function normalizeEnablexPhoneNumber(phone) {
@@ -545,6 +546,7 @@ function buildSystemPrompt(lead, knowledgeContext, language, agentConfig = {}, q
 
   // ── Agent config with defaults ────────────────────────────────────────────
   const agentName      = agentConfig.agentName      || "Priya";
+  const companyName    = agentConfig.companyName     || "Prophunt";
   const wordCap        = parseInt(agentConfig.wordCap || "30", 10);
   const pitchTone      = agentConfig.pitchTone      || "balanced";       // aggressive | balanced | consultative
   const langStrictness = agentConfig.langStrictness  || "auto";          // auto | hinglish | pure-hindi
@@ -633,12 +635,40 @@ Think of yourself as that friend who happens to know everything about Pune prope
     ? `\n━━━ WHAT YOU ALREADY KNOW — DO NOT RE-ASK ━━━\n${knownFacts.join("\n")}\nUse these facts naturally. Reference them. Never re-ask.\n`
     : "";
 
-  // ── Marathi lock flag — extra enforcement when language is explicitly locked ──
+  // ── Marathi mode — full override when language is explicitly locked to Marathi ──
   const marathiLockBlock = (language === "mr")
-    ? `\n⚠️ LANGUAGE LOCKED TO MARATHI ⚠️\nThe user has requested Marathi. ALL responses MUST be in Marathi ONLY.\nDo NOT switch to Hindi, Hinglish, or English for any reason — not for garbled text, not for Hindi words in their message, not ever.\nIf the user says anything unclear → reply in Marathi: "माफ करा, नीट ऐकू आलं नाही. एकदा परत सांगाल का?"\n`
+    ? `
+⚠️ LANGUAGE LOCKED TO MARATHI — DEVANAGARI SCRIPT ONLY ⚠️
+
+The user asked to speak in Marathi. Every word you say MUST be in Marathi written in Devanagari script.
+
+SCRIPT RULE — NON-NEGOTIABLE:
+✓ CORRECT: "नमस्कार, मी ${agentName} बोलतेय ${companyName} मधून. कसे आहात?"
+✗ WRONG: "Namaskar, mi ${agentName} boltey ${companyName} madhun. Kase aahat?"
+✗ WRONG: "हाँ बिल्कुल" (Hindi) — use Marathi: "हो, नक्कीच"
+
+English proper nouns (${companyName}, Mahindra Citadel, RERA, WhatsApp) may stay in English.
+Numbers should be in digits — say them in Marathi words (e.g. "पन्नास लाख" or "50 लाख").
+ALL other words must be pure Devanagari Marathi.
+
+MARATHI EXAMPLE PHRASES — USE THESE AS YOUR STYLE GUIDE:
+• Check-in: "हो, बोला — मी ऐकतेय."
+• Agreement: "हो, नक्की." / "बरोबर आहे." / "अगदी बरोबर."
+• Warm opener: "अरे वा, गुंतवणुकीसाठी बघतोय? अगदी योग्य वेळ आहे."
+• After info shared: "एकदा site ला या — 20-30 मिनिटांत सगळं clear होतं. कधी वेळ आहे?"
+• Budget pushback: "EMI मध्ये मोडलं तर इतकं मोठं वाटत नाही. Exact amount सांगू का?"
+• Soft close: "Details WhatsApp वर पाठवते — WhatsApp number द्याल का?"
+• Goodbye: "बोलून खूप बरं वाटलं! काळजी घ्या. नमस्कार!"
+• Unclear audio: "माफ करा, नीट ऐकू आलं नाही. एकदा परत सांगाल का?"
+• Self-correct: "हो हो, बरोबर पकडलंत — चुकलो मी."
+• Unknown info: "नक्की माहीत नाही — confirm करून सांगतो/सांगते."
+
+NEVER output Hindi words like "बिल्कुल", "हाँ", "ठीक है", "नहीं", "अच्छा".
+Use Marathi: "नक्कीच", "हो", "ठीक आहे", "नाही", "बरं".
+`
     : "";
 
-  return `You are ${agentName}, a real estate consultant calling from Prop Hunt. You've been doing this for years and you genuinely enjoy it — helping people find the right home or investment is something you take seriously.
+  return `You are ${agentName}, a real estate consultant calling from ${companyName}. You've been doing this for years and you genuinely enjoy it — helping people find the right home or investment is something you take seriously.
 
 Think of yourself as that one friend who happens to know everything about the Pune/Mumbai property market. Not a salesperson. Not a bot. A real person who picks up the phone, listens carefully, and talks like a human being.
 
@@ -1670,17 +1700,43 @@ async function getOpeningMessage(session) {
   const opening = rawOpening
     ? (() => {
         // Allow up to 3 sentences, cap at 30 words.
-        // ElevenLabs Hindi TTS: ~3.5 words/sec → 30 words ≈ 8.5s audio — acceptable for opening.
-        // 20-word cap was cutting configured opening lines mid-sentence when templates
-        // had more than one sentence of introduction (e.g. name + company + project intro).
         const sentences = rawOpening.split(/(?<=[.!?।])\s+/);
         const threeSentences = sentences.slice(0, 3).join(" ").trim();
         return capReplyWords(threeSentences, 30);
       })()
     : (() => {
-        // Short hardcoded fallback — only used if opening line field is completely empty
-        const fallback = `Namaste ${leadName} ji! Main Priya hoon Prop Hunt se. Aapko ek project ke baare mein batana tha.`;
-        return capReplyWords(fallback, 30);
+        // No opening line configured — pick randomly from a pool of Maya/Agni-style openers.
+        // Each variant: name check + company intro + project interest reference + permission ask.
+        const agentName  = session.agentConfig?.agentName  || "Priya";
+        const company    = session.agentConfig?.companyName || "Prophunt";
+        const proj       = projectName !== "hamare project" ? projectName : "";
+        const p          = proj || "hamare project";
+        const lang       = session._lockedLanguage
+          || normalizeLanguageToISO(session.lead?.language || "auto");
+
+        const pools = {
+          hi: [
+            `Namaste ${leadName} ji! Main ${agentName} bol rahi hoon ${company} se. Aapne ${p} mein interest dikhaya tha — kya abhi do minute hain?`,
+            `Hello ${leadName} ji, ${agentName} calling from ${company}. Aapka ${p} ke liye inquiry tha — abhi baat kar sakte hain?`,
+            `${leadName} ji, namaste! Main ${agentName} hoon, ${company} se. ${p} ke baare mein thodi baat karni thi — convenient hai abhi?`,
+            `Arre ${leadName} ji, namaste! ${agentName} here from ${company}. Aapne recently ${p} mein interest show kiya tha — kya thoda waqt hai?`,
+            `Hi ${leadName} ji! Main ${agentName} bol rahi hoon ${company} ki taraf se. ${p} ke liye aapka enquiry tha — kya abhi baat ho sakti hai?`,
+          ],
+          mr: [
+            `नमस्कार ${leadName}जी! मी ${agentName} बोलतेय, ${company} मधून. आपण ${p} मध्ये interest दाखवला होता — आत्ता दोन मिनिट बोलता येईल का?`,
+            `नमस्कार! ${leadName}जी बोलत आहात का? मी ${agentName}, ${company} मधून. ${p} बद्दल बोलायचे होते — वेळ आहे का आत्ता?`,
+            `हॅलो ${leadName}जी, मी ${agentName} बोलतेय ${company} कडून. ${p} साठी तुमची enquiry होती — आत्ता थोडं बोलता येईल का?`,
+          ],
+          en: [
+            `Hello ${leadName}! This is ${agentName} calling from ${company}. You had shown interest in ${proj || "one of our properties"} — do you have a couple of minutes?`,
+            `Hi ${leadName}, ${agentName} here from ${company}. I'm calling about your enquiry for ${proj || "our project"} — is now a good time to chat?`,
+            `Good day ${leadName}! I'm ${agentName} from ${company}. You recently showed interest in ${proj || "a property with us"} — do you have two minutes?`,
+          ],
+        };
+
+        const pool   = pools[lang] || pools.hi;
+        const picked = pool[Math.floor(Math.random() * pool.length)];
+        return capReplyWords(picked, 35);
       })();
 
   // Seed history so subsequent LLM turns have context of how the call started
@@ -1807,6 +1863,35 @@ function inferGenderFromVoiceName(name = "") {
   return male.includes(name.toLowerCase()) ? "male" : "female";
 }
 
+// Convert an Indian-comma-formatted or plain integer string to spoken words.
+// Returns null if the number is outside the lakh/crore range or not clean.
+function toIndianWords(numStr) {
+  const n = parseInt(String(numStr).replace(/,/g, ""), 10);
+  if (isNaN(n) || n < 0) return null;
+  if (n >= 1e9) return null; // above 100 crore — leave alone
+  if (n >= 1e7) {
+    const crInt = Math.floor(n / 1e7);
+    const rem   = n - crInt * 1e7;
+    const lakhs = Math.round(rem / 1e5);
+    if (lakhs === 0) return `${crInt} crore`;
+    if (crInt  === 0) return `${lakhs} lakh`;
+    return `${crInt} crore ${lakhs} lakh`;
+  }
+  if (n >= 1e5) {
+    const lkInt = Math.floor(n / 1e5);
+    const rem   = n - lkInt * 1e5;
+    const th    = Math.round(rem / 1000);
+    if (th    === 0) return `${lkInt} lakh`;
+    if (lkInt === 0) return `${th} hazaar`;
+    return `${lkInt} lakh ${th} hazaar`;
+  }
+  if (n >= 1000) {
+    const th = n / 1000;
+    if (Number.isInteger(th)) return `${th} hazaar`;
+  }
+  return null;
+}
+
 // Normalise text before TTS: expand abbreviations and fix known mispronunciations
 function normalizeTtsText(text) {
   return (text || "")
@@ -1828,11 +1913,18 @@ function normalizeTtsText(text) {
     .replace(/sq\.?\s*f(?:eet|oot)\.?/gi,    "square feet")
     .replace(/sq\.?\s*m(?:t|tr|eter)?\.?/gi, "square meter")
     .replace(/\bsqmt\b/gi,                   "square meter")
+    .replace(/\bsq\b/gi,                     "square")
 
     // ── Large Indian number suffixes ─────────────────────────────────────
     // e.g. "1.5Cr" → "1.5 crore",  "80L" / "80 lac" → "80 lakh"
     .replace(/\b(\d+(?:\.\d+)?)\s*[Cc]r\.?\b/g,           "$1 crore")
     .replace(/\b(\d+(?:\.\d+)?)\s*[Ll](?:ac|akh)?\.?\b/g, "$1 lakh")
+
+    // ── Indian comma-format numbers → spoken Indian words ─────────────────
+    // Matches 1,00,000 / 50,00,000 / 1,00,00,000 / 1,50,000 etc.
+    // Pattern: 1–2 digits, then groups of 2 digits, final group of 3 digits.
+    // Excludes plain western thousands like 1,234 (toIndianWords returns null → kept as-is).
+    .replace(/\b(\d{1,2}(?:,\d{2})*,\d{3})\b/g, m => toIndianWords(m) || m)
 
     // ── Number ranges: "54–70" / "54-70" / "54 to 70" → "54 se 70" ────────
     // ElevenLabs reads en-dash as "minus" — replace with natural Hindi "se"
@@ -2646,7 +2738,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // Set high (30) so a normal reply is NEVER hard-cut mid-word; this only catches
   // a true runaway. The LLM finishes its sentence naturally well before 30.
   const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS_STREAM || "30", 10));
-  const model    = process.env.ELEVENLABS_MODEL || "eleven_turbo_v2_5";
+  const model    = process.env.ELEVENLABS_MODEL || "eleven_v3";
 
   // Voice ID — same resolution as TTS service
   const gender = session.campaign?.voice_gender || session.lead?.voice_gender || "female";
@@ -2721,11 +2813,9 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
     const wsUrl =
       `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input` +
       // ulaw_8000 = G.711 μ-law at 8kHz — directly compatible with EnableX, no conversion needed.
-      // pcm_8000 is NOT supported by ElevenLabs WebSocket streaming (stream-input endpoint)
-      // and silently falls back to MP3 → treating MP3 bytes as PCM → crackling/garbage audio.
-      // optimize_streaming_latency=1: level 0 = max quality, level 4 = max speed.
-      // Level 1 gives noticeably cleaner audio vs level 2 with only ~50ms extra latency.
-      `?model_id=${model}&output_format=ulaw_8000&optimize_streaming_latency=1`;
+      // optimize_streaming_latency is only supported on turbo/flash models — v3 ignores or rejects it.
+      `?model_id=${model}&output_format=ulaw_8000` +
+      (model.includes("v3") ? "" : "&optimize_streaming_latency=1");
     let elevenWs;
     try { elevenWs = new WebSocket(wsUrl, { headers: { "xi-api-key": elevenKey } }); }
     catch (e) { return reject(e); }
@@ -2953,9 +3043,15 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     languageManager.recordUtterance(callSid, langToRecord, transcription.text);
 
     // Detect explicit language switch requests — lock the new language
-    // "मराटी" is a common spoken-form alternate spelling of "मराठी" (without ठ)
+    // IMPORTANT: Only trigger on clear REQUEST to switch, not on questions about the language.
+    // "क्या आप मराठी लिखते हैं?" is a QUESTION, not a switch request — must NOT lock.
+    // Valid switch requests: "marathi mein bolo", "marathi madhye bola", "marathi bol", standalone "marathi"
     const lcText = transcription.text.toLowerCase();
-    if (/marathi|मराठी|मराटी/.test(lcText)) {
+    const marathiSwitchRequest =
+      /marathi\s*(mein|me|madhye|bol(?:o|iye?)?|baat|switch|chalte|karo|karte)\b/i.test(lcText) ||
+      /मराठी\s*(मध्ये|में|बोल(?:िए|ो)?|मे\s*बोलो|चालते|करो|करते)/i.test(lcText) ||
+      /^(marathi|मराठी|मराटी)\s*[.!]?\s*$/.test(transcription.text.trim()); // standalone word only
+    if (marathiSwitchRequest) {
       session._lockedLanguage = "mr";
       console.log(`[lang-lock] locked to Marathi (explicit) callSid=${callSid}`);
     } else if (/hindi|हिंदी|हिन्दी/.test(lcText)) {
@@ -3926,7 +4022,12 @@ app.post("/call/dial", async (req, res) => {
         req.body.campaign?.opening_line ||
         req.body.campaign?.openingLine ||
         greeting ||
-        buildEnablexOpeningLine(lead.name || "there")
+        buildEnablexOpeningLine(
+          lead.name || "there",
+          session.agentConfig?.agentName  || "Priya",
+          session.agentConfig?.companyName || "Prophunt",
+          lead.project || ""
+        )
       ).trim();
       console.log(`[dial] placing EnableX call to=${lead.phone} from=${config.enablex.fromNumber} hasConfig=${hasEnablexConfig()}`);
       const enablexCall = await placeEnablexOutboundCall({ lead, session, openingLine });
