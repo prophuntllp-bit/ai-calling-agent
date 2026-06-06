@@ -2646,7 +2646,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // Set high (30) so a normal reply is NEVER hard-cut mid-word; this only catches
   // a true runaway. The LLM finishes its sentence naturally well before 30.
   const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS_STREAM || "30", 10));
-  const model    = process.env.ELEVENLABS_MODEL || "eleven_flash_v2_5";
+  const model    = process.env.ELEVENLABS_MODEL || "eleven_turbo_v2_5";
 
   // Voice ID — same resolution as TTS service
   const gender = session.campaign?.voice_gender || session.lead?.voice_gender || "female";
@@ -2666,11 +2666,11 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // style: expressiveness — too high sounds theatrical on phone; 0.3-0.5 is the sweet spot.
   // speed: slightly below 1.0 sounds warmer and clearer on phone audio.
   const ESETTINGS = {
-    warm:         { stability: 0.18, similarity_boost: 1.0, style: 0.50, speed: 0.92 },  // friendly, welcoming
-    excited:      { stability: 0.12, similarity_boost: 1.0, style: 0.65, speed: 1.00 },  // genuine excitement
-    empathetic:   { stability: 0.30, similarity_boost: 1.0, style: 0.38, speed: 0.87 },  // budget/concern handling
-    professional: { stability: 0.35, similarity_boost: 1.0, style: 0.32, speed: 0.95 },  // site visit confirmations
-    neutral:      { stability: 0.20, similarity_boost: 1.0, style: 0.45, speed: 0.93 },  // default
+    warm:         { stability: 0.22, similarity_boost: 1.0, style: 0.55, speed: 0.90 },
+    excited:      { stability: 0.15, similarity_boost: 1.0, style: 0.70, speed: 0.97 },
+    empathetic:   { stability: 0.32, similarity_boost: 1.0, style: 0.42, speed: 0.85 },
+    professional: { stability: 0.38, similarity_boost: 1.0, style: 0.35, speed: 0.93 },
+    neutral:      { stability: 0.25, similarity_boost: 1.0, style: 0.50, speed: 0.90 },
   };
   const voiceSettings = ESETTINGS[emotion] || ESETTINGS.neutral;
 
@@ -2723,8 +2723,9 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
       // ulaw_8000 = G.711 μ-law at 8kHz — directly compatible with EnableX, no conversion needed.
       // pcm_8000 is NOT supported by ElevenLabs WebSocket streaming (stream-input endpoint)
       // and silently falls back to MP3 → treating MP3 bytes as PCM → crackling/garbage audio.
-      // optimize_streaming_latency=2: level 3 causes audio artifacts on ulaw_8000 telephony.
-      `?model_id=${model}&output_format=ulaw_8000&optimize_streaming_latency=2`;
+      // optimize_streaming_latency=1: level 0 = max quality, level 4 = max speed.
+      // Level 1 gives noticeably cleaner audio vs level 2 with only ~50ms extra latency.
+      `?model_id=${model}&output_format=ulaw_8000&optimize_streaming_latency=1`;
     let elevenWs;
     try { elevenWs = new WebSocket(wsUrl, { headers: { "xi-api-key": elevenKey } }); }
     catch (e) { return reject(e); }
