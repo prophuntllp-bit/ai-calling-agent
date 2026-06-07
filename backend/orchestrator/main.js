@@ -2738,31 +2738,24 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   // Set high (30) so a normal reply is NEVER hard-cut mid-word; this only catches
   // a true runaway. The LLM finishes its sentence naturally well before 30.
   const maxWords = Math.min(agentWordCap, parseInt(process.env.TTS_MAX_WORDS_STREAM || "30", 10));
-  const model    = process.env.ELEVENLABS_MODEL || "eleven_v3";
+  const model    = process.env.ELEVENLABS_MODEL || "eleven_multilingual_v2";
 
   // Voice ID — same resolution as TTS service
   const gender = session.campaign?.voice_gender || session.lead?.voice_gender || "female";
   const voiceId = gender === "male"
     ? (process.env.ELEVENLABS_VOICE_MALE   || "pNInz6obpgDQGcFmaJgB")
-    : (process.env.ELEVENLABS_VOICE_FEMALE || process.env.ELEVENLABS_VOICE_ID || "zmh5xhBvMzqR4ZlXgcgL");
+    : (process.env.ELEVENLABS_VOICE_FEMALE || process.env.ELEVENLABS_VOICE_ID || "1qEiC6qsybMkmnNdVMbK");
 
   // Emotion → voice settings
   const emotion = emotionFromContext(userText, { stage: session.stage });
-  // Voice emotion settings — warm and natural without being theatrical.
-  // stability: lower = more pitch variation (conversational), higher = steady/monotone.
-  // style: expressiveness 0-1. Indian real estate calls work best at 0.15-0.30 range —
-  //   too high sounds fake/over-the-top on phone calls; too low sounds robotic.
-  // similarity_boost: 1.0 keeps voice identity consistent.
-  // Voice settings tuned for natural, non-robotic Hinglish phone calls.
-  // stability: lower = more pitch variation (natural conversation), higher = flat/robotic.
-  // style: expressiveness — too high sounds theatrical on phone; 0.3-0.5 is the sweet spot.
-  // speed: slightly below 1.0 sounds warmer and clearer on phone audio.
+  // Monika Sogam (Calm and Natural) — multilingual_v2 settings matched from ElevenLabs Studio:
+  // stability ~0.95 (very stable, calm), similarity 1.0, style ~0.15 (low exaggeration), speed ~0.85 (slightly slow).
   const ESETTINGS = {
-    warm:         { stability: 0.22, similarity_boost: 1.0, style: 0.55, speed: 0.90 },
-    excited:      { stability: 0.15, similarity_boost: 1.0, style: 0.70, speed: 0.97 },
-    empathetic:   { stability: 0.32, similarity_boost: 1.0, style: 0.42, speed: 0.85 },
-    professional: { stability: 0.38, similarity_boost: 1.0, style: 0.35, speed: 0.93 },
-    neutral:      { stability: 0.25, similarity_boost: 1.0, style: 0.50, speed: 0.90 },
+    warm:         { stability: 0.92, similarity_boost: 1.0, style: 0.18, speed: 0.85 },
+    excited:      { stability: 0.88, similarity_boost: 1.0, style: 0.22, speed: 0.90 },
+    empathetic:   { stability: 0.95, similarity_boost: 1.0, style: 0.12, speed: 0.82 },
+    professional: { stability: 0.95, similarity_boost: 1.0, style: 0.10, speed: 0.87 },
+    neutral:      { stability: 0.93, similarity_boost: 1.0, style: 0.15, speed: 0.85 },
   };
   const voiceSettings = ESETTINGS[emotion] || ESETTINGS.neutral;
 
@@ -2829,7 +2822,7 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
         // [50, 100...] was too aggressive — small chunks on phone calls (ulaw_8000) cause
         // robotic/glitchy audio because the G.711 codec needs sufficient audio length to
         // maintain natural prosody. Use larger chunks for clean phone call quality.
-        generation_config: { chunk_length_schedule: [120, 160, 250] },
+        generation_config: { chunk_length_schedule: [80, 120, 200] },
       }));
 
       // LLM streaming — tokens pipe directly into ElevenLabs WS
@@ -3887,7 +3880,7 @@ app.get("/health", async (_req, res) => {
 
 // ── ElevenLabs voices — returns only the 2 configured voices (male + female) ─
 app.get("/voices", (_req, res) => {
-  const femaleId = process.env.ELEVENLABS_VOICE_FEMALE || process.env.ELEVENLABS_VOICE_ID || "zmh5xhBvMzqR4ZlXgcgL";
+  const femaleId = process.env.ELEVENLABS_VOICE_FEMALE || process.env.ELEVENLABS_VOICE_ID || "1qEiC6qsybMkmnNdVMbK";
   const maleId   = process.env.ELEVENLABS_VOICE_MALE   || "pNInz6obpgDQGcFmaJgB";
   const voices = [
     {
