@@ -241,7 +241,7 @@ function loadSettings() {
 
 function saveSettings() {
   const s = {
-    voice:       document.getElementById('setting-voice')?.value    || 'Priya',
+    voice:       document.getElementById('setting-voice')?.value    || '',
     language:    document.getElementById('setting-language')?.value || 'English',
     openingLine: document.getElementById('setting-opening')?.value  || '',
   };
@@ -330,26 +330,7 @@ function interpolateOpeningLine(text, leadName, projectName) {
     .replace(/\[Project Name\]/gi, project);
 }
 
-function getOpeningLine(language, leadName, projectName) {
-  const name    = leadName    || 'ji';
-  const project = projectName || 'our project';
-  // Use saved custom opening line if set — interpolate all placeholder formats
-  const saved = loadSettings().openingLine;
-  if (saved) return interpolateOpeningLine(saved, name, project);
-
-  const map = {
-    'Multilingual': `Namaste ${name}, main Prop Hunt se bol rahi hoon. Aapne ${project} mein interest dikhaya tha, kya aap thoda waqt de sakte hain?`,
-    'Hindi':    `Namaste ${name}, main Prop Hunt se Priya bol rahi hoon. Aapne ${project} mein interest dikhaya tha, kya aap thoda waqt de sakte hain?`,
-    'Marathi':  `Namaskar ${name}, mi Prop Hunt madhun Priya bolte ahe. Tumhi ${project} madhye swaaras darshavla hota, thoda welt deu shkata ka?`,
-    'Tamil':    `Vanakkam ${name}, naan Prop Hunt-il irundhu Priya pesukireen. Neenga ${project}-il aasai kaattineergal, konjam neram peesalama?`,
-    'Telugu':   `Namaste ${name}, nenu Prop Hunt nundi Priya maatlaadutunnaanu. Meeru ${project} lo aasakthi chupincharu, koddisepati maatlaadataama?`,
-    'Bengali':  `Namaskar ${name}, ami Prop Hunt theke Priya bolchi. Apni ${project}-e aapnar aagrah dekhiechhilen, ektu kotha bolben?`,
-    'Kannada':  `Namaskara ${name}, naanu Prop Hunt-ininda Priya maatnaaduttiddene. Neevu ${project}-alli aasakthi tholiside, swalpa maatukaduveera?`,
-    'Gujarati': `Namaskar ${name}, hun Prop Hunt tharathi Priya bolun chhu. Tamne ${project} maa ras padyo hato, thodi vaar vaat karo?`,
-    'English':  `Hello ${name}, this is Priya calling from Prop Hunt. I noticed you showed interest in ${project}. Do you have a few minutes to chat?`,
-  };
-  return map[language] || map['English'];
-}
+// getOpeningLine removed — opening line is optional; backend generates greeting when blank
 
 // ─── Opening line live preview ─────────────────────────────────
 function updateOpeningPreview() {
@@ -391,7 +372,7 @@ function initTestCallForm() {
     const custom   = document.getElementById('call-opening').value.trim();
     const kbId     = document.getElementById('call-kb')?.value || '';
     const settings = loadSettings();
-    const voice    = settings.voice || 'Priya';
+    const voice    = settings.voice || '';
     const voiceMeta = getVoiceMeta(voice);
 
     // Opening line is optional — if blank, backend generates a natural greeting
@@ -426,7 +407,7 @@ function initTestCallForm() {
       const orgName = sess?.tenantName || localStorage.getItem('prophunt_tenant_name') || 'Prophunt';
       if (!active) return { companyName: orgName };
       return {
-        agentName:      active.name?.split('—')[0]?.trim() || 'Priya',
+        agentName:      active.name?.split('—')[0]?.trim() || 'Maya',
         companyName:    orgName,
         pitchTone:      active.pitchTone      || 'balanced',
         langStrictness: active.langStrictness || 'pure-hindi',
@@ -2103,14 +2084,17 @@ function initVoiceAgentPage() {
   populateVoiceSelect('agent-voice', s.voice || '');
 
   // Opening line is optional — only restore if user previously saved one
+  // Clear old hardcoded templates that contain legacy brand/agent names
   const co = document.getElementById('call-opening');
   if (co) {
     const saved = s.openingLine || '';
-    const isValidOpening = saved.length >= 20
+    const isLegacy = /prop.?hunt|priya|ritu|roopa/i.test(saved);
+    const isValidOpening = !isLegacy && saved.length >= 20
       && !/^[\w.+%-]+@[\w.-]+\.\w+$/.test(saved.trim())
       && !/^https?:\/\//.test(saved.trim())
       && !/^\+?\d[\d\s().-]{7,}$/.test(saved.trim());
     co.value = isValidOpening ? saved : '';
+    if (isLegacy) { s.openingLine = ''; localStorage.setItem('prophunt_settings', JSON.stringify(s)); }
     updateOpeningPreview();
   }
 
@@ -2517,7 +2501,9 @@ function renderAgentsList() {
 
 // ── System prompt generator (frontend is the source of truth) ────────────
 function generateAgentSystemPrompt(cfg = {}) {
-  const agentName      = cfg.agentName      || cfg.name?.split('—')[0]?.trim() || 'Priya';
+  const sess           = getCurrentSession();
+  const companyName    = cfg.companyName || sess?.tenantName || localStorage.getItem('prophunt_tenant_name') || 'our company';
+  const agentName      = cfg.agentName   || cfg.name?.split('—')[0]?.trim() || 'Maya';
   const language       = cfg.language       || 'Hindi';
   const pitchTone      = cfg.pitchTone      || 'balanced';
   const langStrictness = cfg.langStrictness || 'pure-hindi';
@@ -2575,7 +2561,7 @@ Build trust; a good experience today leads to a referral tomorrow.`
     ? 'Warm and patient — build trust first, never pressure.'
     : 'Warm and natural — balance helpful information with gentle sales momentum.';
 
-  return `You are ${agentName}, a friendly real estate consultant calling on behalf of Prop Hunt.
+  return `You are ${agentName}, a friendly real estate consultant calling on behalf of ${companyName}.
 
 {{KNOWLEDGE_BASE}}
 
@@ -2598,8 +2584,7 @@ RULES:
 7. ANTI-REPETITION: Never open with "Dhanyawaad / Shukriya / Aapka shukriya" mid-call. If lead says "theek hai / ok / accha" — ask a follow-up, don't thank them.
 8. Never repeat your introduction after the first greeting.
 9. If asked if AI: say you're calling from the developer's sales team.
-10. Say "Prop Hunt" (two words) — NEVER "Prop-hunt".
-11. QUALIFY before closing: note lead's BHK preference, budget range, purpose (investment/self-use), and timeline.
+10. QUALIFY before closing: note lead's BHK preference, budget range, purpose (investment/self-use), and timeline.
 
 CONVERSATION STYLE: ${toneStyle}
 
