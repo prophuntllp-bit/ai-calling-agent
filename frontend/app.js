@@ -7,7 +7,7 @@ const runtimeConfig = (typeof window !== 'undefined' && window.__APP_CONFIG__) |
 const API_BASE = runtimeConfig.API_BASE_URL || '/api';
 const INTERNAL_TOKEN = runtimeConfig.INTERNAL_TOKEN || 'local-dev-internal-token';
 // Orchestrator endpoints route separately via vercel.json (not through platform-api)
-const ORCH_BASE = '';
+const ORCH_BASE = 'https://orchestrator-production-7c9d.up.railway.app';
 
 // ─── State ───────────────────────────────────────────────────
 const state = {
@@ -2626,13 +2626,9 @@ function resolveVoiceName(voiceId) {
 }
 
 // ── ElevenLabs voice loader ────────────────────────────────────────────────
-const ORCH_DIRECT = 'https://orchestrator-production-7c9d.up.railway.app';
-
 async function fetchElevenLabsVoices() {
   if (_cachedELVoices) return _cachedELVoices;
-  // Try Vercel rewrite first; fallback to Railway directly (CORS enabled on orchestrator)
   let res = await fetch(`${ORCH_BASE}/voices`);
-  if (!res.ok) res = await fetch(`${ORCH_DIRECT}/voices`);
   const data = await res.json();
   _cachedELVoices = data.voices || [];
   return _cachedELVoices;
