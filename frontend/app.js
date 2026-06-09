@@ -7,7 +7,7 @@ const runtimeConfig = (typeof window !== 'undefined' && window.__APP_CONFIG__) |
 const API_BASE = runtimeConfig.API_BASE_URL || '/api';
 const INTERNAL_TOKEN = runtimeConfig.INTERNAL_TOKEN || 'local-dev-internal-token';
 // Orchestrator endpoints route separately via vercel.json (not through platform-api)
-const ORCH_BASE = 'https://orchestrator-production-7c9d.up.railway.app';
+const ORCH_BASE = 'https://orchestrator-production-dde7.up.railway.app';
 
 // ─── State ───────────────────────────────────────────────────
 const state = {
@@ -3033,7 +3033,7 @@ function hideContactDetail() {
 
 function initPhoneNumbersPage() {
   const orchUrl = document.getElementById('webhook-url-display')?.textContent
-    || 'https://orchestrator-production-7c9d.up.railway.app';
+    || 'https://orchestrator-production-dde7.up.railway.app';
   const pnWebhook = document.getElementById('pn-webhook-url');
   if (pnWebhook) pnWebhook.textContent = orchUrl + '/events';
 
@@ -3071,7 +3071,7 @@ function savePNNumber(val) {
 
 function initInboundPage() {
   const orchUrl = document.getElementById('webhook-url-display')?.textContent
-    || 'https://orchestrator-production-7c9d.up.railway.app';
+    || 'https://orchestrator-production-dde7.up.railway.app';
   const el = document.getElementById('inbound-webhook-url');
   if (el) el.textContent = orchUrl + '/events/inbound';
 

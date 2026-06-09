@@ -25,27 +25,27 @@
     },
     {
       "source": "/call/:path*",
-      "destination": "https://orchestrator-production-7c9d.up.railway.app/call/:path*"
+      "destination": "https://orchestrator-production-dde7.up.railway.app/call/:path*"
     },
     {
       "source": "/sessions/:path*",
-      "destination": "https://orchestrator-production-7c9d.up.railway.app/sessions/:path*"
+      "destination": "https://orchestrator-production-dde7.up.railway.app/sessions/:path*"
     },
     {
       "source": "/sessions",
-      "destination": "https://orchestrator-production-7c9d.up.railway.app/sessions"
+      "destination": "https://orchestrator-production-dde7.up.railway.app/sessions"
     },
     {
       "source": "/health",
-      "destination": "https://orchestrator-production-7c9d.up.railway.app/health"
+      "destination": "https://orchestrator-production-dde7.up.railway.app/health"
     },
     {
       "source": "/voices",
-      "destination": "https://orchestrator-production-7c9d.up.railway.app/voices"
+      "destination": "https://orchestrator-production-dde7.up.railway.app/voices"
     },
     {
       "source": "/recordings/:path*",
-      "destination": "https://orchestrator-production-7c9d.up.railway.app/recordings/:path*"
+      "destination": "https://orchestrator-production-dde7.up.railway.app/recordings/:path*"
     }
   ]
 }
