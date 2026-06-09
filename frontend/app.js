@@ -431,15 +431,23 @@ function initTestCallForm() {
     };
 
     try {
-      const res = await fetch(`${ORCH_BASE}/call/dial`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload),
-      });
+      const dialCtrl = new AbortController();
+      const dialTimer = setTimeout(() => dialCtrl.abort(), 55000);
+      let res;
+      try {
+        res = await fetch(`${ORCH_BASE}/call/dial`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(payload),
+          signal:  dialCtrl.signal,
+        });
+      } finally {
+        clearTimeout(dialTimer);
+      }
 
       if (!res.ok) {
         const errBody = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status}: ${errBody.slice(0, 120)}`);
+        throw new Error(`HTTP ${res.status}: ${errBody.slice(0, 200)}`);
       }
 
       const data = await res.json();

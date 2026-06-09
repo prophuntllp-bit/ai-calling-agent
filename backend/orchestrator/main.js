@@ -4006,8 +4006,8 @@ app.post("/call/dial", async (req, res) => {
   try {
     await persistSession(session);
     const greeting = await getOpeningMessage(session);
-    session.pendingGreetingAudio = await synthesizeSpeech(session, greeting);
-    // Pre-warm TTS cache in background — ready before call connects
+    // Synthesize greeting and pre-warm in background — don't block the dial response
+    synthesizeSpeech(session, greeting).then(audio => { session.pendingGreetingAudio = audio; }).catch(() => {});
     prewarmTTSCache(session).catch(() => {});
     const provider = resolveTelephonyProvider(req.body.provider);
 
