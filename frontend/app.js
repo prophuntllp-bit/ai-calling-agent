@@ -3074,7 +3074,7 @@ function initInboundPage() {
   const select = document.getElementById('inbound-agent-select');
   if (select) {
     const agents = loadAgents();
-    select.innerHTML = '<option value="default">Default AI Agent (Priya)</option>' +
+    select.innerHTML = '<option value="default">Default AI Agent</option>' +
       agents.filter(a => a.id !== 'default')
         .map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
   }
