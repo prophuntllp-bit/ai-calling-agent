@@ -2086,23 +2086,26 @@ function initVoiceAgentPage() {
   const s = loadSettings();
   const al = document.getElementById('agent-language');
   const ao = document.getElementById('agent-opening');
-  if (al && s.language)    al.value = s.language;
-  if (ao && s.openingLine) ao.value = s.openingLine;
+  if (al && s.language) al.value = s.language;
   // Populate ElevenLabs voices (replaces hardcoded Sarvam list)
   populateVoiceSelect('agent-voice', s.voice || '');
 
   // Opening line is optional — only restore if user previously saved one
-  // Clear old hardcoded templates that contain legacy brand/agent names
+  // Clear old hardcoded templates that contain legacy brand/agent names or invalid values
+  const saved = s.openingLine || '';
+  const isLegacy = /prop.?hunt|priya|ritu|roopa/i.test(saved);
+  const isValidOpening = !isLegacy && saved.length >= 20
+    && !/^[\w.+%-]+@[\w.-]+\.\w+$/.test(saved.trim())
+    && !/^https?:\/\//.test(saved.trim())
+    && !/^\+?\d[\d\s().-]{7,}$/.test(saved.trim())
+    && !/^x-[a-z\-]+$/i.test(saved.trim());   // not an HTTP header name like "X-Api-Key"
+  const openingValue = isValidOpening ? saved : '';
+  if (ao) ao.value = openingValue;
+  if (!isValidOpening && saved) { s.openingLine = ''; localStorage.setItem('prophunt_settings', JSON.stringify(s)); }
+
   const co = document.getElementById('call-opening');
   if (co) {
-    const saved = s.openingLine || '';
-    const isLegacy = /prop.?hunt|priya|ritu|roopa/i.test(saved);
-    const isValidOpening = !isLegacy && saved.length >= 20
-      && !/^[\w.+%-]+@[\w.-]+\.\w+$/.test(saved.trim())
-      && !/^https?:\/\//.test(saved.trim())
-      && !/^\+?\d[\d\s().-]{7,}$/.test(saved.trim());
-    co.value = isValidOpening ? saved : '';
-    if (isLegacy) { s.openingLine = ''; localStorage.setItem('prophunt_settings', JSON.stringify(s)); }
+    co.value = openingValue;
     updateOpeningPreview();
   }
 
