@@ -403,7 +403,7 @@ function initTestCallForm() {
     const activeAgentConfig = (() => {
       const agents = loadAgents();
       const active = agents.find(a => a.status === 'active') || agents[0];
-      const sess   = getCurrentSession();
+      const sess   = getAuthSession();
       const orgName = sess?.tenantName || localStorage.getItem('prophunt_tenant_name') || 'Prophunt';
       if (!active) return { companyName: orgName };
       return {
@@ -2512,7 +2512,7 @@ function renderAgentsList() {
 
 // ── System prompt generator (frontend is the source of truth) ────────────
 function generateAgentSystemPrompt(cfg = {}) {
-  const sess           = getCurrentSession();
+  const sess           = getAuthSession();
   const companyName    = cfg.companyName || sess?.tenantName || localStorage.getItem('prophunt_tenant_name') || 'our company';
   const agentName      = cfg.agentName   || cfg.name?.split('—')[0]?.trim() || 'Maya';
   const language       = cfg.language       || 'Hindi';
