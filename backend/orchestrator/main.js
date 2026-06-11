@@ -3781,10 +3781,12 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer, rawMula
 
   // ── Barge-in detection ───────────────────────────────────────────────────────
   // Caller speaks while agent is playing → cancel agent audio after 6 sustained frames (120ms).
-  // Note: Deepgram now always receives audio (see below), so no buffer replay needed —
-  // Deepgram already has all frames when barge-in is confirmed.
+  // Echo suppression window: ignore barge-in for the first echoSuppressionUntil ms — the
+  // phone mic picks up the agent's own TTS playback and detectSpeech returns true, causing
+  // a false barge-in that kills the mulaw queue after only 120ms (12 frames × 20ms) with
+  // hundreds of chunks still pending. Only count real barge-in AFTER the echo window passes.
   if (session.telephony?.agentSpeakingUntil && Date.now() < session.telephony.agentSpeakingUntil) {
-    if (hasSpeech) {
+    if (hasSpeech && Date.now() >= (session.telephony.echoSuppressionUntil || 0)) {
       inbound.bargeinFrames = (inbound.bargeinFrames || 0) + 1;
       if (inbound.bargeinFrames >= 6) {
         // Barge-in confirmed — stop agent audio, clear suppression windows
@@ -3798,7 +3800,7 @@ async function handleCallerAudioFrame(ws, session, callSid, audioBuffer, rawMula
         console.log(`[enablex-media] barge-in confirmed (6 frames) callSid=${callSid}`);
       }
     } else {
-      inbound.bargeinFrames = 0; // reset on silence — must be sustained speech
+      inbound.bargeinFrames = 0; // reset on silence or during echo suppression window
       inbound.bargeinBuffer = [];
     }
   } else {
