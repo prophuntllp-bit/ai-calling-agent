@@ -108,14 +108,32 @@ fs.mkdirSync(config.recordingsDir, { recursive: true });
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// CORS — allow dashboard (Vercel) and localhost to call all HTTP endpoints
+// CORS — restrict to known origins; fall back to '*' only if ALLOWED_ORIGINS not configured
+const _allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',').map(o => o.trim()).filter(Boolean);
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin || '';
+  const allowed = _allowedOrigins.length === 0
+    || _allowedOrigins.includes(origin)
+    || /^http:\/\/localhost(:\d+)?$/.test(origin)
+    || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin);
+  if (allowed && origin) res.header('Access-Control-Allow-Origin', origin);
+  else if (_allowedOrigins.length === 0) res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Internal-Token');
+  res.header('Vary', 'Origin');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
+
+// Auth middleware — verifies X-Internal-Token on protected routes
+function requireToken(req, res, next) {
+  const token = req.headers['x-internal-token'] || '';
+  if (!token || token !== config.internalToken) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
 // Recordings endpoint — Redis-first so files survive container restarts / redeploys.
 // Falls back to local disk for files written this session that haven't been cached yet.
 app.get("/recordings/:callSid/mixed.wav", async (req, res) => {
@@ -3925,7 +3943,7 @@ app.get("/languages", (_req, res) => {
 });
 
 // Session status — polled by dashboard Test Call panel
-app.get("/sessions", (_req, res) => {
+app.get("/sessions", requireToken, (_req, res) => {
   const list = Array.from(sessions.values()).map((s) => ({
     call_sid: s.callSid,
     status: s.status || "active",
@@ -3940,7 +3958,7 @@ app.get("/sessions", (_req, res) => {
 });
 
 // Active calls with live feed WebSocket URL — used by dashboard live feed panel
-app.get("/active-calls", (req, res) => {
+app.get("/active-calls", requireToken, (req, res) => {
   const wsBase = getPublicWsBaseUrl(req);
   const list = Array.from(sessions.values())
     .filter(s => !s.closed)
@@ -3958,7 +3976,7 @@ app.get("/active-calls", (req, res) => {
   res.json({ calls: list, count: list.length });
 });
 
-app.get("/sessions/:callSid", (req, res) => {
+app.get("/sessions/:callSid", requireToken, (req, res) => {
   const session = sessions.get(req.params.callSid);
   if (!session) {
     return res.status(404).json({ call_sid: req.params.callSid, status: "completed", state: "not_found" });
@@ -3982,7 +4000,7 @@ app.get("/sessions/:callSid", (req, res) => {
   });
 });
 
-app.post("/call/dial", async (req, res) => {
+app.post("/call/dial", requireToken, async (req, res) => {
   if (!acceptingTraffic) {
     return res.status(503).json({ error: "Service draining" });
   }
@@ -4068,7 +4086,7 @@ app.post("/call/dial", async (req, res) => {
   }
 });
 
-app.post("/call/bulk-dial", async (req, res) => {
+app.post("/call/bulk-dial", requireToken, async (req, res) => {
   const campaignId = req.body.campaign_id || crypto.randomUUID();
   const leads = req.body.leads || (await fetchDialableLeads(campaignId, req.body.limit || 10, req.body.filters || {}));
   const results = [];
