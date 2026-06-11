@@ -437,7 +437,7 @@ function initTestCallForm() {
       try {
         res = await fetch(`${ORCH_BASE}/call/dial`, {
           method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-Internal-Token': INTERNAL_TOKEN },
           body:    JSON.stringify(payload),
           signal:  dialCtrl.signal,
         });
@@ -503,7 +503,7 @@ function startPolling(sid) {
 
   state.pollInterval = setInterval(async () => {
     try {
-      const res = await fetch(`${ORCH_BASE}/sessions/${sid}`);
+      const res = await fetch(`${ORCH_BASE}/sessions/${sid}`, { headers: { 'X-Internal-Token': INTERNAL_TOKEN } });
 
       // 404 = session deleted = call ended normally
       if (res.status === 404) {
@@ -561,7 +561,7 @@ function startPolling(sid) {
 // ─── Live calls counter ───────────────────────────────────────
 async function refreshLiveCalls() {
   try {
-    const res = await fetch(`${ORCH_BASE}/sessions`);
+    const res = await fetch(`${ORCH_BASE}/sessions`, { headers: { 'X-Internal-Token': INTERNAL_TOKEN } });
     if (!res.ok) return;
     const data = await res.json();
     const sessions = data.sessions || (Array.isArray(data) ? data : []);
@@ -641,8 +641,8 @@ function renderDashboardActivity(calls) {
           <span class="material-symbols-outlined" style="font-size:15px;color:${color};">${icon}</span>
         </div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:500;color:var(--text-1);">${c.lead_name || c.phone || 'Unknown'}</div>
-          <div style="font-size:11px;color:var(--text-2);">${c.phone || ''} · ${formatTime(c.created_at)}</div>
+          <div style="font-size:13px;font-weight:500;color:var(--text-1);">${escapeHtml(c.lead_name || c.phone || 'Unknown')}</div>
+          <div style="font-size:11px;color:var(--text-2);">${escapeHtml(c.phone || '')} · ${formatTime(c.created_at)}</div>
         </div>
         ${statusChip(outcome)}
       </div>`;
@@ -2129,7 +2129,7 @@ async function refreshLiveSessions() {
   const container = document.getElementById('live-sessions-list');
   if (!container) { clearInterval(_liveSessionsPollTimer); _liveSessionsPollTimer = null; return; }
   try {
-    const res = await fetch(`${ORCH_BASE}/sessions`);
+    const res = await fetch(`${ORCH_BASE}/sessions`, { headers: { 'X-Internal-Token': INTERNAL_TOKEN } });
     if (!res.ok) throw new Error('fetch failed');
     const data = await res.json();
     const sessions = (data.sessions || []).filter(s => !s.closed);
@@ -2151,11 +2151,11 @@ async function refreshLiveSessions() {
       return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);">
         <div style="width:8px;height:8px;border-radius:50%;background:#b1ec3e;flex-shrink:0;box-shadow:0 0 6px rgba(177,236,62,0.6);" class="pulse-dot"></div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:12px;font-weight:600;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${name}</div>
-          <div style="font-size:10px;color:var(--text-3);">${lang} · ${state} · ${mm}:${ss}</div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(name)}</div>
+          <div style="font-size:10px;color:var(--text-3);">${escapeHtml(lang)} · ${escapeHtml(state)} · ${mm}:${ss}</div>
         </div>
-        <div style="font-size:10px;color:var(--text-3);font-family:monospace;">${sid}</div>
-        <button onclick="viewLiveSession('${s.call_sid}')" class="btn-ghost" style="padding:4px 10px;font-size:10px;">View</button>
+        <div style="font-size:10px;color:var(--text-3);font-family:monospace;">${escapeHtml(sid)}</div>
+        <button onclick="viewLiveSession('${escapeHtml(s.call_sid)}')" class="btn-ghost" style="padding:4px 10px;font-size:10px;">View</button>
       </div>`;
     }).join('');
   } catch {
@@ -2172,7 +2172,7 @@ async function viewLiveSession(callSid) {
   if (titleEl) titleEl.textContent = `Session: ${callSid.slice(-10)}`;
   bodyEl.textContent = 'Loading…';
   try {
-    const res = await fetch(`${ORCH_BASE}/sessions/${callSid}`);
+    const res = await fetch(`${ORCH_BASE}/sessions/${callSid}`, { headers: { 'X-Internal-Token': INTERNAL_TOKEN } });
     if (!res.ok) throw new Error('not found');
     const s = await res.json();
     const dur = s.started_at ? Math.floor((Date.now() - new Date(s.started_at).getTime()) / 1000) : 0;
@@ -2180,14 +2180,14 @@ async function viewLiveSession(callSid) {
     const ss2 = String(dur % 60).padStart(2, '0');
     bodyEl.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
-        <div><span style="color:var(--text-3);font-size:10px;">PHONE</span><div style="font-size:12px;color:var(--text-1);">${s.phone || '—'}</div></div>
-        <div><span style="color:var(--text-3);font-size:10px;">LEAD</span><div style="font-size:12px;color:var(--text-1);">${s.lead_name || '—'}</div></div>
-        <div><span style="color:var(--text-3);font-size:10px;">LANGUAGE</span><div style="font-size:12px;color:var(--cyan);">${s.language || '—'}</div></div>
+        <div><span style="color:var(--text-3);font-size:10px;">PHONE</span><div style="font-size:12px;color:var(--text-1);">${escapeHtml(s.phone || '—')}</div></div>
+        <div><span style="color:var(--text-3);font-size:10px;">LEAD</span><div style="font-size:12px;color:var(--text-1);">${escapeHtml(s.lead_name || '—')}</div></div>
+        <div><span style="color:var(--text-3);font-size:10px;">LANGUAGE</span><div style="font-size:12px;color:var(--cyan);">${escapeHtml(s.language || '—')}</div></div>
         <div><span style="color:var(--text-3);font-size:10px;">DURATION</span><div style="font-size:12px;color:var(--accent);">${mm}:${ss2}</div></div>
-        <div><span style="color:var(--text-3);font-size:10px;">STATE</span><div style="font-size:12px;color:var(--text-1);">${s.state || s.status || '—'}</div></div>
+        <div><span style="color:var(--text-3);font-size:10px;">STATE</span><div style="font-size:12px;color:var(--text-1);">${escapeHtml(s.state || s.status || '—')}</div></div>
         <div><span style="color:var(--text-3);font-size:10px;">TURNS</span><div style="font-size:12px;color:var(--text-1);">${s.turn_count ?? '—'}</div></div>
       </div>
-      ${s.last_agent_reply ? `<div style="margin-top:6px;"><span style="color:var(--text-3);font-size:10px;">LAST AGENT REPLY</span><div style="margin-top:4px;padding:8px;background:rgba(0,0,0,0.3);border-radius:8px;font-size:11px;color:var(--text-2);font-style:italic;">"${s.last_agent_reply}"</div></div>` : ''}
+      ${s.last_agent_reply ? `<div style="margin-top:6px;"><span style="color:var(--text-3);font-size:10px;">LAST AGENT REPLY</span><div style="margin-top:4px;padding:8px;background:rgba(0,0,0,0.3);border-radius:8px;font-size:11px;color:var(--text-2);font-style:italic;">"${escapeHtml(s.last_agent_reply)}"</div></div>` : ''}
     `;
   } catch {
     bodyEl.textContent = 'Could not load session detail.';
@@ -3108,7 +3108,7 @@ async function refreshInboundCalls() {
   const container = document.getElementById('inbound-calls-list');
   if (!container) return;
   try {
-    const res = await fetch(`${ORCH_BASE}/sessions`, { signal: AbortSignal.timeout(5000) });
+    const res = await fetch(`${ORCH_BASE}/sessions`, { headers: { 'X-Internal-Token': INTERNAL_TOKEN }, signal: AbortSignal.timeout(5000) });
     if (!res.ok) throw new Error();
     const data = await res.json();
     const sessions = data.sessions || (Array.isArray(data) ? data : []);
