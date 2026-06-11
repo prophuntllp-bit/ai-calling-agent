@@ -2248,6 +2248,17 @@ async function endCall(session, finalStatus = "completed") {
     if (cloudUrl) {
       session.recordingPath = cloudUrl;
       session.recordings.mixed_url = cloudUrl;
+      // Container filesystem is ephemeral — delete local WAV + PCM files after
+      // successful Cloudinary upload to prevent disk exhaustion on long-running deploys.
+      const rec = session.recording;
+      for (const p of [
+        session.recordings.caller_path,
+        session.recordings.agent_path,
+        session.recordings.mixed_path,
+        rec?.callerPcmPath, rec?.agentPcmPath, rec?.mixedPcmPath,
+      ]) {
+        if (p) fs.unlink(p, () => {});
+      }
     }
   }
   const durationSec = Math.max(1, Math.round((Date.now() - session.startedTs) / 1000));
@@ -3972,21 +3983,32 @@ app.get("/active-calls", requireToken, (req, res) => {
   res.json({ calls: list, count: list.length });
 });
 
-app.get("/sessions/:callSid", requireToken, (req, res) => {
-  const session = sessions.get(req.params.callSid);
+app.get("/sessions/:callSid", requireToken, async (req, res) => {
+  const callSid = req.params.callSid;
+  let session = sessions.get(callSid);
+
+  // If not in memory (e.g. after a redeploy), fall back to Redis-persisted state.
+  // This lets the dashboard show call results for recently completed calls.
   if (!session) {
-    return res.status(404).json({ call_sid: req.params.callSid, status: "completed", state: "not_found" });
+    try {
+      const raw = await redis.get(`session:${callSid}`);
+      if (raw) session = JSON.parse(raw);
+    } catch {}
+  }
+
+  if (!session) {
+    return res.status(404).json({ call_sid: callSid, status: "completed", state: "not_found" });
   }
   const turnCount = Math.floor((session.history?.length || 0) / 2);
-  const detectedLang = languageManager.getBaseLanguage(session.callSid);
+  const detectedLang = languageManager.getBaseLanguage(session.callSid || callSid);
   res.json({
-    call_sid: session.callSid,
+    call_sid: session.callSid || callSid,
     status: session.status || "active",
     state: session.guidedState || null,
     closed: session.closed,
     phone: session.lead?.phone,
     lead_name: session.lead?.name,
-    language: languageManager.getLanguage(session.callSid),
+    language: languageManager.getLanguage(session.callSid || callSid),
     detected_language: detectedLang,
     started_at: session.startedAt,
     turn_count: turnCount,
