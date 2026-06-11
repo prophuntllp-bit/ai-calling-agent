@@ -2934,6 +2934,166 @@ async function streamingLLMWithElevenLabs(ws, session, userText, { onFirstAudio 
   });
 }
 
+// ── Streaming LLM → local TTS pipeline ───────────────────────────────────────
+// Reduces TTFA on the non-ElevenLabs path from ~3-5s to ~1-1.5s by overlapping
+// LLM token generation with TTS synthesis per sentence:
+//
+//  Before: [  full LLM reply: 1-3s  ] → [ TTS full reply: 1-2s ] → play
+//  After:  [ tokens → sentence 1 ] → [ TTS s1: 600ms ] → play s1
+//                                    [ tokens → sentence 2 ] → [ TTS s2: 600ms ] → play s2
+//
+// Returns: full reply string on success  |  null → caller falls back to getLLMResponse
+async function streamingLLMWithLocalTTS(ws, session, userText) {
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (!openaiKey) return null;
+  // Only used when ElevenLabs is not the TTS provider
+  const ttsProvider = (process.env.TTS_PROVIDER || "elevenlabs").toLowerCase();
+  if (ttsProvider === "elevenlabs" && process.env.ELEVENLABS_API_KEY) return null;
+
+  const callSid = session.callSid;
+  const maxWords = parseInt(process.env.TTS_MAX_WORDS || "18", 10);
+
+  // Build messages — mirrors getLLMResponse logic (knowledge context + web search)
+  const language = languageManager.getLanguage(callSid);
+  session.history.push({ role: "user", content: userText });
+  session.history = session.history.slice(-16);
+  const knowledgeContext = (
+    session.dynamicVariables?.knowledge_base ||
+    (await getKnowledgeContext(session.campaign?.project_id || session.lead.project_id, userText).catch(() => ""))
+  ).slice(0, 3500);
+  const resolvedLanguage = session._lockedLanguage
+    || ((language === "auto" || language === "auto-IN" || !language)
+      ? (languageManager.getBaseLanguage(callSid) || "hi")
+      : language);
+  const systemPrompt = buildSystemPrompt(session.lead, knowledgeContext, resolvedLanguage, session.agentConfig || {}, session.qualification || {});
+  const webSearchContext = await searchWebContext(userText, session.lead, knowledgeContext).catch(() => "");
+  const historyContext = session.history.slice(-16).slice(0, -1);
+  const searchBlock = webSearchContext
+    ? { role: "system", content: `WEB SEARCH RESULTS for "${userText}" (use this to answer accurately, then pivot to our project):\n${webSearchContext}` }
+    : null;
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...historyContext,
+    ...(searchBlock ? [searchBlock] : []),
+    { role: "user", content: `[CURRENT — respond to this only]: ${userText}` },
+  ];
+
+  const t0 = Date.now();
+  let fullText    = "";
+  let tokenBuf    = "";
+  let wordCount   = 0;
+  let sentCount   = 0;
+  const MAX_SENTS = 3;
+
+  // In-order playback: each TTS call pushes a Promise onto this chain.
+  // Sentences synthesize in parallel but play in arrival order.
+  let drainChain  = Promise.resolve();
+  let firstSent   = false;
+  const generation = (session.telephony?.outGeneration || 0);
+
+  function stopped() {
+    return session.closed || ws.readyState !== WebSocket.OPEN
+      || (session.telephony?.outGeneration || 0) !== generation;
+  }
+
+  // Fire TTS for one sentence fragment, chain playback in order
+  function fireSentence(text) {
+    if (sentCount >= MAX_SENTS || stopped()) return;
+    sentCount++;
+    const idx = sentCount;
+    const ttsPromise = synthesizeSpeech(session, normalizeTtsText(text)).catch(() => null);
+    drainChain = drainChain.then(async () => {
+      if (stopped()) return;
+      const audio = await ttsPromise;
+      if (!audio || stopped()) return;
+      if (!firstSent) {
+        clearEnablexMedia(ws, session);
+        firstSent = true;
+      }
+      await recordAgentAudio(session, audio, "agent-reply");
+      sendEnablexMedia(ws, session, audio, `stream-local-${idx}`);
+      const playMs = session.telephony?.lastPlaybackMs || 800;
+      await new Promise(r => setTimeout(r, Math.min(playMs + 80, 4000)));
+    });
+  }
+
+  // Sentence boundary detector: fires when buffer ends with a sentence terminator
+  // and has accumulated enough words to be worth synthesizing
+  const SENT_RE = /[.!?।…]\s*$/;
+  function flushIfSentence(final = false) {
+    const clean = tokenBuf.trim();
+    if (!clean) return;
+    const words = clean.split(/\s+/).length;
+    if (final || (SENT_RE.test(clean) && words >= 5)) {
+      const capped = capReplyWords(clean, maxWords - fullText.trim().split(/\s+/).length + words);
+      if (capped) fireSentence(capped);
+      tokenBuf = "";
+    }
+  }
+
+  try {
+    const llmResp = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      { model: process.env.OPENAI_MODEL || "gpt-4.1", messages, temperature: 0.4, max_tokens: 70, stream: true },
+      { headers: { Authorization: `Bearer ${openaiKey}` }, responseType: "stream", timeout: 8000 }
+    );
+
+    await new Promise((resolve, reject) => {
+      let remainder = "";
+      let totalWords = 0;
+      llmResp.data.on("data", (chunk) => {
+        if (sentCount >= MAX_SENTS) return;
+        const text  = remainder + chunk.toString("utf8");
+        const lines = text.split("\n");
+        remainder   = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const d = line.slice(6).trim();
+          if (d === "[DONE]") break;
+          try {
+            const tok = JSON.parse(d).choices?.[0]?.delta?.content || "";
+            if (!tok) continue;
+            fullText  += tok;
+            tokenBuf  += tok;
+            totalWords = fullText.trim().split(/\s+/).length;
+            if (totalWords >= maxWords) {
+              flushIfSentence(true);
+              return;
+            }
+            flushIfSentence();
+          } catch {}
+        }
+      });
+      llmResp.data.on("end",   () => { flushIfSentence(true); resolve(); });
+      llmResp.data.on("error", reject);
+    });
+
+    // Wait for all queued TTS + playback to finish
+    await drainChain;
+
+    if (!firstSent) {
+      // LLM produced text but TTS failed — roll back history so getLLMResponse repushes cleanly
+      session.history = session.history.filter(h => !(h.role === "user" && h.content === userText));
+      return null;
+    }
+
+    const reply = fullText.trim();
+    session.history.push({ role: "assistant", content: reply });
+    const m = reply.match(/OUTCOME:({.*})/s);
+    if (m) { try { session.outcome = JSON.parse(m[1]); } catch {} }
+    const clean = reply.replace(/OUTCOME:({.*})/s, "").trim();
+    if (clean) broadcastLiveEvent(session, { type: "agent_reply", text: clean });
+    console.log(`[local-stream] done ttfa=${Date.now()-t0}ms reply="${clean.slice(0,60)}" callSid=${callSid}`);
+    return clean;
+
+  } catch (err) {
+    console.warn(`[local-stream] failed callSid=${callSid}: ${err.message}`);
+    // Roll back the user message we pushed — getLLMResponse will push it again
+    session.history = session.history.filter(h => !(h.role === "user" && h.content === userText));
+    return null;
+  }
+}
+
 async function processCallerUtterance(ws, session, callSid, reason = "utterance") {
   const inbound = session.inboundAudio;
   if (!inbound || inbound.processing || !inbound.chunks.length || session.telephony?.hangupScheduled) return;
@@ -3221,8 +3381,28 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
       return;
     }
 
-    // ── Fallback: REST LLM + sentence-by-sentence TTS ─────────────────────────
+    // ── Fallback: streaming LLM → local TTS (sentence-pipelined) ─────────────
+    // Try the streaming path first: LLM tokens → sentence boundaries → TTS in parallel.
+    // TTFA improves from ~3-5s to ~1-1.5s. Falls back to sequential on any error.
     const t1 = Date.now();
+    const localStreamed = await streamingLLMWithLocalTTS(ws, session, transcription.text)
+      .catch(() => null);
+
+    if (localStreamed !== null) {
+      console.log(`[agent] local-stream callSid=${callSid} total=${Date.now()-t0}ms reply="${localStreamed.slice(0,60)}"`);
+      if (session.inboundAudio) {
+        session.inboundAudio.processing  = false;
+        session.inboundAudio.lastFlushAt = Date.now();
+      }
+      if (isTerminalGuidedState(session)) {
+        scheduleAgentSideHangup(ws, session, session.guidedState);
+      }
+      console.log(`[agent] total_latency=${Date.now()-t0}ms callSid=${callSid}`);
+      await persistSession(session);
+      return;
+    }
+
+    // Sequential fallback (no OpenAI key, or local-stream errored)
     const reply = await getLLMResponse(session, transcription.text);
     console.log(`[agent] callSid=${callSid} llm=${Date.now()-t1}ms total_to_llm=${Date.now()-t0}ms reply="${reply.slice(0,60)}"`);
 
