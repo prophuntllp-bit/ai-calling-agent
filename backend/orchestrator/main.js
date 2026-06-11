@@ -108,20 +108,13 @@ fs.mkdirSync(config.recordingsDir, { recursive: true });
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// CORS — restrict to known origins; fall back to '*' only if ALLOWED_ORIGINS not configured
-const _allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
-  .split(',').map(o => o.trim()).filter(Boolean);
+// CORS — allow all origins; restrict via ALLOWED_ORIGINS env var when ready
 app.use((req, res, next) => {
-  const origin = req.headers.origin || '';
-  const allowed = _allowedOrigins.length === 0
-    || _allowedOrigins.includes(origin)
-    || /^http:\/\/localhost(:\d+)?$/.test(origin)
-    || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin);
-  if (allowed && origin) res.header('Access-Control-Allow-Origin', origin);
-  else if (_allowedOrigins.length === 0) res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin || '*';
+  res.header('Access-Control-Allow-Origin', origin);
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Internal-Token');
-  res.header('Vary', 'Origin');
+  res.header('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -130,6 +123,7 @@ app.use((req, res, next) => {
 function requireToken(req, res, next) {
   const token = req.headers['x-internal-token'] || '';
   if (!token || token !== config.internalToken) {
+    console.warn(`[auth] 401 on ${req.method} ${req.path} — token present: ${!!token}, expected: ${config.internalToken.slice(0, 6)}***`);
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();
