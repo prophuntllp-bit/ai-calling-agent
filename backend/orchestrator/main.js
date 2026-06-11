@@ -2544,10 +2544,10 @@ function sendEnablexMedia(ws, session, audioBuffer, label = "audio") {
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
   session.telephony.agentSpeakingUntil    = Date.now() + playbackMs + 200;
-  // Cap echo suppression at 2.5s — EnableX has hardware echo cancellation for the rest.
-  // Old value was playbackMs + 200ms which could be 9+ seconds for the greeting,
-  // completely blocking the user's first response and making them repeat themselves.
-  session.telephony.echoSuppressionUntil  = Date.now() + Math.min(playbackMs + 200, 2500);
+  // Cap at 5s — covers typical greeting (3–5s) and most mid-call replies fully.
+  // Previous 2.5s cap let phone-echo trigger false barge-in for 3–18s responses.
+  // Genuine >5s responses rely on EnableX hardware echo cancellation beyond this.
+  session.telephony.echoSuppressionUntil  = Date.now() + Math.min(playbackMs + 200, 5000);
   // Opening greeting protection — cap at 9s max (opening audio is ≤8.8s after word cap fix).
   // Old code: no cap → 16s audio → user blocked for 17s → 1011 Deepgram close.
   if (label && label.startsWith("opening-greeting")) {
@@ -2662,7 +2662,7 @@ function createMulawStreamQueue(ws, session, label = "stream") {
   const generation = (session.telephony.outGeneration || 0) + 1;
   session.telephony.outGeneration = generation;
   session.telephony.agentSpeakingUntil   = Date.now() + 30000; // tentative — updated on close()
-  session.telephony.echoSuppressionUntil = Date.now() + 2500;  // 2.5s cap — updated on close() with actual duration
+  session.telephony.echoSuppressionUntil = Date.now() + 5000;  // 5s cap — updated on close() with actual duration
   if (session.inboundAudio) { session.inboundAudio.chunks = []; session.inboundAudio.speechFrames = 0; }
 
   const queue   = [];
@@ -2733,7 +2733,7 @@ function createMulawStreamQueue(ws, session, label = "stream") {
       const pendingMs = (totalSent + queue.length) * 20;
       session.telephony.lastPlaybackMs       = pendingMs;
       session.telephony.agentSpeakingUntil   = Date.now() + pendingMs + 200;
-      session.telephony.echoSuppressionUntil = Date.now() + Math.min(pendingMs + 200, 2500); // cap at 2.5s
+      session.telephony.echoSuppressionUntil = Date.now() + Math.min(pendingMs + 200, 5000); // cap at 5s
       console.log(`[mulaw-queue] closed totalSent=${totalSent} pending=${queue.length} playbackMs=${pendingMs} callSid=${session.callSid}`);
     },
 
@@ -3754,10 +3754,10 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
 
 // ── SPECULATIVE_STT_FRAMES: fire STT after this many speech frames ─────────────
 // Used in the LOCAL fallback pipeline (when Deepgram is not available).
-// 14 frames × 20ms = 280ms of speech → fires speculative STT while still collecting.
-// Was 8 (160ms) but fired too early, cutting users mid-sentence. 14 is a better balance
-// between latency savings and waiting for a complete thought fragment.
-const SPECULATIVE_STT_FRAMES = 14;
+// 12 frames × 20ms = 240ms of speech → fires speculative STT while still collecting.
+// Was 14 (280ms); reduced to 12 to save ~40ms on short acks like "haan", "ji", "ok".
+// Was 8 (160ms) originally but fired too early, cutting users mid-sentence.
+const SPECULATIVE_STT_FRAMES = 12;
 
 // ── handleCallerAudioFrame — accepts optional rawMulaw for Deepgram forwarding ─
 // rawMulaw: the raw μ-law bytes from EnableX before PCM decoding (extracted by
@@ -4364,7 +4364,7 @@ wss.on("connection", (ws, req) => {
                   const openingText = (session.history || []).find(h => h.role === "assistant")?.content;
                   if (openingText) broadcastLiveEvent(session, { type: "agent_reply", text: openingText });
                 }
-              }, 1200);
+              }, 500);
             }
           }
 
