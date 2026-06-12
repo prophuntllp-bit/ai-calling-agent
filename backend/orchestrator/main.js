@@ -721,6 +721,12 @@ YOU ARE NOT A SCRIPT-READER. You are a person having a real conversation.
 9. VARY YOUR OPENINGS — Don't start every response the same way. Mix it up:
    "Haan bilkul" / "Achha" / "Samjha" / "Dekhiye" / "Arrey wah" / "Sahi baat" / just answer directly sometimes.
 
+10. START WITH A THINKING SOUND — Begin every response with a very brief filler that buys you a half-second to think. This is how real humans talk — it feels natural and keeps the conversation alive.
+    Hindi/Hinglish: "Haan..." / "Achha..." / "Hmm..." / "Dekhiye..." / "Bilkul..."
+    English: "Sure..." / "Right..." / "Okay..." / "Well..." / "Mm-hmm..."
+    Marathi: "Haan..." / "Bghaa..." / "Achha..."
+    Keep it to ONE word followed by a pause (use "..."). Don't chain multiple fillers. This single sound makes you feel present and thinking — not robotic.
+
 ━━━ WHAT YOU'RE TRYING TO FIND OUT — weave naturally into conversation ━━━
 1. Purpose — investment ya khud rehne ke liye?
 2. Area — already know: ${lead.project ? `${lead.project} area` : "not discussed"}
@@ -2372,6 +2378,35 @@ async function synthesizeSpeechCached(session, text) {
   return _origSynthesize(session, text);
 }
 
+// Pre-cached filler audio per language — synthesized once, reused for entire process lifetime.
+// Played immediately after STT while LLM + TTS pipeline is warming up (~1-2s gap).
+const _fillerAudioCache = new Map();
+
+async function playThinkingFiller(ws, session) {
+  if (!ws || ws.readyState !== 1 || session.closed) return;
+  if (session._fillerPlaying) return; // already playing one this turn
+  try {
+    const lang = languageManager.getBaseLanguage(session.callSid) || "hi";
+    if (!_fillerAudioCache.has(lang)) {
+      const fillerText = lang === "en"
+        ? "Sure..."
+        : lang === "mr"
+          ? "Haan..."
+          : "Haan...";
+      const audio = await synthesizeSpeech(session, fillerText).catch(() => null);
+      if (audio) _fillerAudioCache.set(lang, audio);
+    }
+    const fillerAudio = _fillerAudioCache.get(lang);
+    if (fillerAudio && !session.closed && ws.readyState === 1) {
+      session._fillerPlaying = true;
+      clearEnablexMedia(ws, session);
+      sendEnablexMedia(ws, session, fillerAudio, "thinking-filler");
+    }
+  } catch (_) {
+    // Non-critical — silently swallow errors
+  }
+}
+
 function remapSessionCallSid(session, nextCallSid) {
   if (!session || !nextCallSid || session.callSid === nextCallSid) return;
   const previousCallSid = session.callSid;
@@ -3298,11 +3333,17 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
       return;
     }
 
+    // Play a sub-second thinking filler immediately — covers the LLM+TTS warm-up gap.
+    // The real response audio will preempt it via clearEnablexMedia when it's ready.
+    session._fillerPlaying = false;
+    playThinkingFiller(ws, session); // non-blocking, fire-and-forget
+
     // ── ElevenLabs streaming path (low-latency, TTFA ~800ms) ──────────────────
     // Pipes LLM tokens directly to ElevenLabs WS — audio starts before LLM finishes.
     // This is the same fast path used by the Deepgram pipeline.
     // Fallback to REST-per-sentence if ElevenLabs streaming is unavailable.
     const onFirstAudioCb = () => {
+      session._fillerPlaying = false;
       if (session.inboundAudio) {
         session.inboundAudio.processing  = false;
         session.inboundAudio.lastFlushAt = Date.now();
