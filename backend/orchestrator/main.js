@@ -2384,26 +2384,26 @@ const _fillerAudioCache = new Map();
 
 async function playThinkingFiller(ws, session) {
   if (!ws || ws.readyState !== 1 || session.closed) return;
-  if (session._fillerPlaying) return; // already playing one this turn
+  if (session._fillerPlaying) return;
+  // Snapshot outGeneration NOW — if ElevenLabs arrives before synthesis completes, it will
+  // increment outGeneration and we must NOT play the filler (would kill the real audio).
+  const genSnapshot = session.telephony?.outGeneration || 0;
   try {
     const lang = languageManager.getBaseLanguage(session.callSid) || "hi";
     if (!_fillerAudioCache.has(lang)) {
-      const fillerText = lang === "en"
-        ? "Sure..."
-        : lang === "mr"
-          ? "Haan..."
-          : "Haan...";
+      const fillerText = lang === "en" ? "Sure..." : lang === "mr" ? "Haan..." : "Haan...";
       const audio = await synthesizeSpeech(session, fillerText).catch(() => null);
       if (audio) _fillerAudioCache.set(lang, audio);
     }
     const fillerAudio = _fillerAudioCache.get(lang);
-    if (fillerAudio && !session.closed && ws.readyState === 1) {
-      session._fillerPlaying = true;
-      clearEnablexMedia(ws, session);
-      sendEnablexMedia(ws, session, fillerAudio, "thinking-filler");
-    }
+    // Bail out if real audio already started (outGeneration incremented by clearEnablexMedia in eleven-stream)
+    if (!fillerAudio || session.closed || ws.readyState !== 1) return;
+    if ((session.telephony?.outGeneration || 0) !== genSnapshot) return;
+    session._fillerPlaying = true;
+    clearEnablexMedia(ws, session);
+    sendEnablexMedia(ws, session, fillerAudio, "thinking-filler");
   } catch (_) {
-    // Non-critical — silently swallow errors
+    // Non-critical
   }
 }
 
@@ -3239,7 +3239,10 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
     // ElevenLabs STT may return correct lang code, or may misreport (e.g. Odia text with lang=hin).
     // We filter at the language code level here; the system prompt handles script-level fallback.
     // "mar" is an alternate ISO code for Marathi returned by ElevenLabs — normalize to "mr".
-    const SUPPORTED_STT_LANGS = new Set(["hi", "hin", "mr", "mar", "en", "pa", "bn", "gu", "kn", "ml", "ta", "te", "hinglish", "auto"]);
+    // Only allow languages the pipeline actually handles. Regional Indian languages (bn/gu/kn/ml/ta/te/pa)
+    // are regularly returned by Sarvam STT when it mishears Hindi/Marathi phonetics — accepting them
+    // causes the system prompt to instruct the LLM to respond in a language ElevenLabs will mispronounce.
+    const SUPPORTED_STT_LANGS = new Set(["hi", "hin", "mr", "mar", "en", "hinglish", "auto"]);
     const rawSttLang = transcription.language || prevLang || "hi";
     const sttLang = rawSttLang === "mar" ? "mr" : rawSttLang;  // normalize mar → mr
     const safeLang = SUPPORTED_STT_LANGS.has(sttLang) ? sttLang : (prevLang || "hi");
@@ -3387,10 +3390,13 @@ async function processCallerUtterance(ws, session, callSid, reason = "utterance"
       }
       // Schedule silence nudge (mirrors processTranscriptDirect behaviour)
       const nudgeLang = languageManager.getBaseLanguage(callSid) || "hi";
-      const nudgeDelay = parseInt(process.env.SILENCE_NUDGE_MS || "22000", 10);
+      // EnableX closes the media stream after ~20-22s of inactivity from either side.
+      // Nudge must arrive BEFORE that threshold to keep the stream alive.
+      // Default 15s — well under the inactivity threshold, short enough to feel attentive.
+      const nudgeDelay = parseInt(process.env.SILENCE_NUDGE_MS || "15000", 10);
       const scheduleNudge = () => {
-        const echoEnd = session.telephony?.echoSuppressionUntil || 0;
-        const delay = Math.max(0, echoEnd - Date.now()) + nudgeDelay;
+        // Do NOT add echo suppression offset — echo window is already expired long before nudge fires.
+        const delay = nudgeDelay;
         const turnToken = session._lastTurnAt;
         setTimeout(() => {
           if (session._lastTurnAt !== turnToken || session.closed || session.telephony?.hangupScheduled) return;
@@ -3900,9 +3906,8 @@ async function processTranscriptDirect(ws, session, callSid, transcriptText, sou
       // echoSuppressionUntil is updated when the streaming queue closes; grab it now with
       // a small polling delay so it reflects the final close() value.
       const scheduleNudge = () => {
-        const echoEnd   = session.telephony?.echoSuppressionUntil || 0;
-        const waitUntil = Math.max(echoEnd, Date.now()); // don't go back in time
-        const delay     = Math.max(0, waitUntil - Date.now()) + nudgeDelay;
+        // Do NOT add echo suppression offset — echo window is already expired long before nudge fires.
+        const delay = nudgeDelay;
         const turnToken = session._lastTurnAt;
         setTimeout(async () => {
           if (session.closed || session._lastTurnAt !== turnToken || !ws || ws.readyState !== 1) return;
